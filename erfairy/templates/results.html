@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ query }} - ER Fairy Typewriter</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">ER Fairy Typewriter</a>
+    <form class="search-box compact" action="/search" method="get">
+      <input name="q" type="search" value="{{ query }}" placeholder="搜索角色、作品、标签..." autocomplete="off">
+      <input type="hidden" name="category" value="{{ category }}">
+      <button type="submit">搜索</button>
+    </form>
+  </header>
+  <main class="results-layout">
+    <aside class="filters">
+      <a class="active" href="/search?q={{ query }}&category=anime">动漫/角色</a>
+    </aside>
+    <section class="results">
+      {% if query %}
+        <p class="meta">找到 {{ total }} 条结果</p>
+      {% endif %}
+      {% if not query %}
+        <p class="empty">输入关键词开始搜索。</p>
+      {% elif results %}
+        {% for item in results %}
+          <article class="result-item">
+            <a class="result-title" href="{{ item.url }}">{{ item.title }}</a>
+            <p class="result-url">{{ item.source or item.url }} · 相关度 {{ '%.3f'|format(item.score) }}</p>
+            <p class="snippet">{{ item.snippet | safe }}</p>
+            {% if item.tags %}
+              <div class="tags">
+                {% for tag in item.tags %}
+                  <span>{{ tag }}</span>
+                {% endfor %}
+              </div>
+            {% endif %}
+          </article>
+        {% endfor %}
+        <nav class="pager">
+          {% if page > 1 %}
+            <a href="/search?q={{ query }}&category={{ category }}&page={{ page - 1 }}">上一页</a>
+          {% endif %}
+          {% if page * per_page < total %}
+            <a href="/search?q={{ query }}&category={{ category }}&page={{ page + 1 }}">下一页</a>
+          {% endif %}
+        </nav>
+      {% else %}
+        <p class="empty">没有找到匹配结果，可以换一个角色名、作品名或标签试试。</p>
+      {% endif %}
+    </section>
+  </main>
+</body>
+</html>

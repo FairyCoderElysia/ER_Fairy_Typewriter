@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ER Fairy Typewriter</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
+</head>
+<body class="home">
+  <main class="search-shell">
+    <p class="eyebrow">Anime Search Engine</p>
+    <h1>ER Fairy Typewriter</h1>
+    <p class="subtitle">爱莉希雅的妖精打字机，轻量搜索动漫、角色与二次元资料。</p>
+    <form class="search-box" action="/search" method="get">
+      <input name="q" type="search" placeholder="搜索角色、作品、标签..." autocomplete="off" autofocus>
+      <input type="hidden" name="category" value="anime">
+      <button type="submit">搜索</button>
+    </form>
+  </main>
+</body>
+</html>
