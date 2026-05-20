@@ -21,6 +21,7 @@ data/
 redis_search_engine.py
 TF_IDF.py
 Vector_Space_Indexing_Engine.py
+Making_text_search_learn_from_feedback.py
 
 # Secrets and local configuration
 .env
