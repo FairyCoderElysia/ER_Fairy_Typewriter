@@ -1,220 +1,241 @@
-:root {
-  color-scheme: light;
-  --ink: #202124;
-  --muted: #5f6368;
-  --line: #dadce0;
-  --accent: #d9488f;
-  --accent-dark: #a72f6a;
-  --surface: #ffffff;
-  --wash: #f8fafd;
+/*
+  ER Fairy Typewriter 页面样式。
+
+  项目简介：
+    这里负责首页和结果页的视觉布局，让搜索引擎具备可用的前端体验。
+
+  技术栈：
+    CSS 变量、Grid、Flexbox、响应式媒体查询、基础可访问性样式。
+
+  学习目标：
+    1. 理解 CSS 变量如何统一管理颜色。
+    2. 理解 Grid 适合整体布局，Flexbox 适合局部排列。
+    3. 理解媒体查询如何适配手机屏幕。
+
+  知识点与免费文档：
+    - CSS 基础: https://developer.mozilla.org/en-US/docs/Learn/CSS
+    - CSS Grid: https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_grid_layout
+    - Flexbox: https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_flexible_box_layout
+    - 媒体查询: https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_media_queries
+*/
+
+:root { /* 全局变量区，便于统一换主题色。 */
+  color-scheme: light; /* 告诉浏览器当前页面按浅色主题设计。 */
+  --ink: #202124; /* 主文字颜色。 */
+  --muted: #5f6368; /* 次要文字颜色。 */
+  --line: #dadce0; /* 边框线颜色。 */
+  --accent: #d9488f; /* 品牌主色。 */
+  --accent-dark: #a72f6a; /* 深一点的品牌色，用于文字。 */
+  --surface: #ffffff; /* 页面基础背景色。 */
+  --wash: #f8fafd; /* 备用浅背景色。 */
 }
 
-* {
-  box-sizing: border-box;
+* { /* 通配符选择器，影响所有元素。 */
+  box-sizing: border-box; /* 让宽高包含 padding/border，布局更直观。 */
 }
 
-body {
-  margin: 0;
-  font-family: Inter, "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
-  color: var(--ink);
-  background: var(--surface);
+body { /* 页面全局样式。 */
+  margin: 0; /* 清除浏览器默认外边距。 */
+  font-family: Inter, "Segoe UI", "Microsoft YaHei", Arial, sans-serif; /* 字体栈，兼顾英文和中文。 */
+  color: var(--ink); /* 使用主文字色。 */
+  background: var(--surface); /* 使用基础背景色。 */
 }
 
-.home {
-  min-height: 100vh;
-  display: grid;
-  place-items: center;
-  background:
-    radial-gradient(circle at 12% 16%, rgba(255, 217, 236, 0.9), transparent 32%),
-    linear-gradient(135deg, #fff 0%, #f4fbff 52%, #fff7fb 100%);
+.home { /* 首页 body 的专属布局。 */
+  min-height: 100vh; /* 至少占满一屏高度。 */
+  display: grid; /* 使用 Grid 居中主搜索区。 */
+  place-items: center; /* 水平和垂直居中。 */
+  background: /* 使用轻量背景，不依赖图片资源。 */
+    radial-gradient(circle at 12% 16%, rgba(255, 217, 236, 0.9), transparent 32%), /* 左上角柔和粉色光晕。 */
+    linear-gradient(135deg, #fff 0%, #f4fbff 52%, #fff7fb 100%); /* 大面积浅色渐变。 */
 }
 
-.search-shell {
-  width: min(760px, calc(100vw - 32px));
-  text-align: center;
-  padding-bottom: 8vh;
+.search-shell { /* 首页搜索主体容器。 */
+  width: min(760px, calc(100vw - 32px)); /* 桌面最大 760px，移动端留 16px 边距。 */
+  text-align: center; /* 首页内容居中。 */
+  padding-bottom: 8vh; /* 视觉上略微上移，避免完全居中显得下沉。 */
 }
 
-.eyebrow {
-  color: var(--accent-dark);
-  font-size: 13px;
-  letter-spacing: 0;
-  text-transform: uppercase;
-  margin: 0 0 12px;
+.eyebrow { /* 品牌小标题。 */
+  color: var(--accent-dark); /* 使用深品牌色。 */
+  font-size: 13px; /* 小字号，避免抢主标题。 */
+  letter-spacing: 0; /* 不使用负字距，保证可读性。 */
+  text-transform: uppercase; /* 英文转大写。 */
+  margin: 0 0 12px; /* 底部留空。 */
 }
 
-h1 {
-  margin: 0;
-  font-size: clamp(42px, 8vw, 76px);
-  line-height: 1.05;
-  letter-spacing: 0;
+h1 { /* 首页主标题。 */
+  margin: 0; /* 清除默认边距。 */
+  font-size: clamp(42px, 8vw, 76px); /* 响应式字号：最小 42，最大 76。 */
+  line-height: 1.05; /* 紧凑行高。 */
+  letter-spacing: 0; /* 保持正常字距。 */
 }
 
-.subtitle {
-  margin: 18px auto 30px;
-  color: var(--muted);
-  font-size: 17px;
-  line-height: 1.7;
+.subtitle { /* 首页说明文字。 */
+  margin: 18px auto 30px; /* 上下间距，auto 便于居中。 */
+  color: var(--muted); /* 次要文字色。 */
+  font-size: 17px; /* 比正文略大。 */
+  line-height: 1.7; /* 中文长句需要舒适行高。 */
 }
 
-.search-box {
-  width: 100%;
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 10px;
+.search-box { /* 搜索框表单。 */
+  width: 100%; /* 占满父容器宽度。 */
+  display: grid; /* 输入框和按钮用 Grid 排列。 */
+  grid-template-columns: 1fr auto; /* 输入框自适应，按钮按内容宽度。 */
+  gap: 10px; /* 输入框和按钮间距。 */
 }
 
-.search-box input {
-  height: 52px;
-  border: 1px solid var(--line);
-  border-radius: 26px;
-  padding: 0 20px;
-  font-size: 16px;
-  outline: none;
-  background: #fff;
+.search-box input { /* 搜索输入框。 */
+  height: 52px; /* 固定高度，保持按钮和输入框对齐。 */
+  border: 1px solid var(--line); /* 轻边框。 */
+  border-radius: 26px; /* 圆角为高度一半，形成胶囊形。 */
+  padding: 0 20px; /* 左右内边距。 */
+  font-size: 16px; /* 避免移动端输入时自动放大。 */
+  outline: none; /* 去掉默认轮廓，使用自定义 focus。 */
+  background: #fff; /* 输入框白底。 */
 }
 
-.search-box input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 4px rgba(217, 72, 143, 0.12);
+.search-box input:focus { /* 输入框获得焦点时。 */
+  border-color: var(--accent); /* 边框变品牌色。 */
+  box-shadow: 0 0 0 4px rgba(217, 72, 143, 0.12); /* 柔和焦点环，提升可访问性。 */
 }
 
-.search-box button {
-  height: 52px;
-  border: 0;
-  border-radius: 26px;
-  padding: 0 24px;
-  color: #fff;
-  background: var(--accent);
-  font-size: 15px;
-  cursor: pointer;
+.search-box button { /* 搜索按钮。 */
+  height: 52px; /* 与输入框同高。 */
+  border: 0; /* 去掉默认边框。 */
+  border-radius: 26px; /* 胶囊形按钮。 */
+  padding: 0 24px; /* 左右内边距。 */
+  color: #fff; /* 白色文字。 */
+  background: var(--accent); /* 品牌色背景。 */
+  font-size: 15px; /* 按钮文字字号。 */
+  cursor: pointer; /* 鼠标悬停时显示可点击。 */
 }
 
-.topbar {
-  min-height: 78px;
-  display: grid;
-  grid-template-columns: 220px minmax(240px, 720px);
-  align-items: center;
-  gap: 24px;
-  padding: 14px 32px;
-  border-bottom: 1px solid var(--line);
+.topbar { /* 结果页顶部栏。 */
+  min-height: 78px; /* 保证顶部栏高度稳定。 */
+  display: grid; /* 品牌和搜索框横向布局。 */
+  grid-template-columns: 220px minmax(240px, 720px); /* 左侧固定，右侧搜索框响应式。 */
+  align-items: center; /* 垂直居中。 */
+  gap: 24px; /* 栏目间距。 */
+  padding: 14px 32px; /* 内边距。 */
+  border-bottom: 1px solid var(--line); /* 底部分隔线。 */
 }
 
-.brand {
-  color: var(--accent-dark);
-  font-weight: 700;
-  text-decoration: none;
+.brand { /* 顶部品牌链接。 */
+  color: var(--accent-dark); /* 品牌文字颜色。 */
+  font-weight: 700; /* 加粗。 */
+  text-decoration: none; /* 去掉链接下划线。 */
 }
 
 .compact input,
-.compact button {
-  height: 44px;
+.compact button { /* 结果页紧凑搜索框。 */
+  height: 44px; /* 比首页搜索框矮一点，节省空间。 */
 }
 
-.results-layout {
-  display: grid;
-  grid-template-columns: 180px minmax(0, 760px);
-  gap: 28px;
-  padding: 28px 32px 64px;
+.results-layout { /* 结果页主体布局。 */
+  display: grid; /* 左侧筛选 + 右侧结果。 */
+  grid-template-columns: 180px minmax(0, 760px); /* 筛选栏固定，结果列最大 760px。 */
+  gap: 28px; /* 两列间距。 */
+  padding: 28px 32px 64px; /* 页面内边距。 */
 }
 
-.filters a {
-  display: block;
-  color: var(--muted);
-  text-decoration: none;
-  padding: 10px 12px;
-  border-radius: 8px;
+.filters a { /* 筛选链接。 */
+  display: block; /* 让整行可点击。 */
+  color: var(--muted); /* 默认次要色。 */
+  text-decoration: none; /* 去下划线。 */
+  padding: 10px 12px; /* 点击区域。 */
+  border-radius: 8px; /* 小圆角。 */
 }
 
-.filters a.active {
-  color: var(--accent-dark);
-  background: #fff1f7;
+.filters a.active { /* 当前筛选项。 */
+  color: var(--accent-dark); /* 深品牌色。 */
+  background: #fff1f7; /* 浅粉背景。 */
 }
 
-.meta {
-  color: var(--muted);
-  margin: 0 0 20px;
+.meta { /* 结果统计文字。 */
+  color: var(--muted); /* 次要文字色。 */
+  margin: 0 0 20px; /* 底部留白。 */
 }
 
-.result-item {
-  padding: 0 0 26px;
+.result-item { /* 单条搜索结果。 */
+  padding: 0 0 26px; /* 每条结果底部间距。 */
 }
 
-.result-title {
-  color: #1a0dab;
-  font-size: 20px;
-  line-height: 1.35;
-  text-decoration: none;
+.result-title { /* 结果标题链接。 */
+  color: #1a0dab; /* 类 Google 的标题蓝。 */
+  font-size: 20px; /* 标题字号。 */
+  line-height: 1.35; /* 标题行高。 */
+  text-decoration: none; /* 默认不显示下划线。 */
 }
 
-.result-title:hover {
-  text-decoration: underline;
+.result-title:hover { /* 标题悬停状态。 */
+  text-decoration: underline; /* 鼠标悬停显示下划线，提示可点击。 */
 }
 
-.result-url {
-  color: #188038;
-  font-size: 13px;
-  margin: 6px 0;
+.result-url { /* 来源和分数行。 */
+  color: #188038; /* 类 Google 的 URL 绿色。 */
+  font-size: 13px; /* 小字号。 */
+  margin: 6px 0; /* 上下间距。 */
 }
 
-.snippet {
-  color: #3c4043;
-  line-height: 1.65;
-  margin: 0;
+.snippet { /* 摘要片段。 */
+  color: #3c4043; /* 正文灰黑色。 */
+  line-height: 1.65; /* 摘要可读行高。 */
+  margin: 0; /* 清除默认边距。 */
 }
 
-mark {
-  color: inherit;
-  background: #ffe28a;
-  padding: 0 2px;
+mark { /* 命中关键词高亮。 */
+  color: inherit; /* 保持原文字色。 */
+  background: #ffe28a; /* 黄色高亮背景。 */
+  padding: 0 2px; /* 轻微内边距。 */
 }
 
-.tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 10px;
+.tags { /* 标签容器。 */
+  display: flex; /* 标签横向排列。 */
+  flex-wrap: wrap; /* 超出自动换行。 */
+  gap: 6px; /* 标签间距。 */
+  margin-top: 10px; /* 与摘要拉开距离。 */
 }
 
-.tags span {
-  color: var(--accent-dark);
-  background: #fff1f7;
-  border-radius: 999px;
-  padding: 4px 9px;
-  font-size: 12px;
+.tags span { /* 单个标签。 */
+  color: var(--accent-dark); /* 标签文字品牌色。 */
+  background: #fff1f7; /* 标签浅背景。 */
+  border-radius: 999px; /* 胶囊形标签。 */
+  padding: 4px 9px; /* 内边距。 */
+  font-size: 12px; /* 小字号。 */
 }
 
-.empty {
-  color: var(--muted);
+.empty { /* 空状态提示。 */
+  color: var(--muted); /* 次要文字色。 */
 }
 
-.pager {
-  display: flex;
-  gap: 12px;
+.pager { /* 分页导航。 */
+  display: flex; /* 上一页/下一页横向排列。 */
+  gap: 12px; /* 链接间距。 */
 }
 
-.pager a {
-  color: var(--accent-dark);
-  text-decoration: none;
+.pager a { /* 分页链接。 */
+  color: var(--accent-dark); /* 品牌色。 */
+  text-decoration: none; /* 去掉默认下划线。 */
 }
 
-@media (max-width: 760px) {
+@media (max-width: 760px) { /* 移动端布局：屏幕宽度小于等于 760px 生效。 */
   .topbar,
-  .results-layout {
-    grid-template-columns: 1fr;
-    padding-left: 18px;
-    padding-right: 18px;
+  .results-layout { /* 顶部栏和结果布局都改成单列。 */
+    grid-template-columns: 1fr; /* 单列布局。 */
+    padding-left: 18px; /* 缩小左右边距。 */
+    padding-right: 18px; /* 缩小左右边距。 */
   }
 
-  .filters {
-    display: none;
+  .filters { /* 移动端隐藏侧边筛选。 */
+    display: none; /* 首版只有一个分类，隐藏不影响功能。 */
   }
 
-  .search-box {
-    grid-template-columns: 1fr;
+  .search-box { /* 移动端搜索框。 */
+    grid-template-columns: 1fr; /* 输入框和按钮上下排列。 */
   }
 
-  .search-box button {
-    width: 100%;
+  .search-box button { /* 移动端按钮。 */
+    width: 100%; /* 按钮占满宽度，更好点击。 */
   }
 }

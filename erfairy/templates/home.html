@@ -1,20 +1,39 @@
-<!doctype html>
-<html lang="zh-CN">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ER Fairy Typewriter</title>
-  <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
+<!--
+  ER Fairy Typewriter 首页模板。
+
+  项目简介：
+    这是搜索引擎的第一屏，目标是让用户像使用 Google 一样直接输入关键词。
+
+  技术栈：
+    HTML5、Jinja2 模板、FastAPI url_for、响应式 CSS。
+
+  学习目标：
+    1. 理解模板文件如何被 web.py 的 Jinja2Templates 渲染。
+    2. 理解表单 GET 提交如何把关键词变成 /search?q=xxx。
+    3. 理解静态 CSS 如何通过 url_for('static', path='/style.css') 引入。
+
+  知识点与免费文档：
+    - HTML 表单: https://developer.mozilla.org/en-US/docs/Learn/Forms
+    - Jinja2 模板: https://jinja.palletsprojects.com/en/stable/templates/
+    - FastAPI 模板: https://fastapi.tiangolo.com/advanced/templates/
+-->
+<!doctype html> <!-- 使用 HTML5 文档模式。 -->
+<html lang="zh-CN"> <!-- 声明页面主要语言是简体中文，利于浏览器和搜索引擎理解。 -->
+<head> <!-- head 放页面元信息，不直接展示主体内容。 -->
+  <meta charset="utf-8"> <!-- 使用 UTF-8，保证中文正常显示。 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1"> <!-- 移动端响应式布局必备。 -->
+  <title>ER Fairy Typewriter</title> <!-- 浏览器标签页标题。 -->
+  <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}"> <!-- 通过 FastAPI 静态路由加载 CSS。 -->
 </head>
-<body class="home">
-  <main class="search-shell">
-    <p class="eyebrow">Anime Search Engine</p>
-    <h1>ER Fairy Typewriter</h1>
-    <p class="subtitle">爱莉希雅的妖精打字机，轻量搜索动漫、角色与二次元资料。</p>
-    <form class="search-box" action="/search" method="get">
-      <input name="q" type="search" placeholder="搜索角色、作品、标签..." autocomplete="off" autofocus>
-      <input type="hidden" name="category" value="anime">
-      <button type="submit">搜索</button>
+<body class="home"> <!-- home 类用于 CSS 区分首页背景和布局。 -->
+  <main class="search-shell"> <!-- main 表示页面主要内容区域。 -->
+    <p class="eyebrow">Anime Search Engine</p> <!-- 小标题，建立产品语境。 -->
+    <h1>ER Fairy Typewriter</h1> <!-- 主品牌标题。 -->
+    <p class="subtitle">爱莉希雅的妖精打字机，轻量搜索动漫、角色与二次元资料。</p> <!-- 产品说明。 -->
+    <form class="search-box" action="/search" method="get"> <!-- GET 表单会跳转到 /search?q=关键词。 -->
+      <input name="q" type="search" placeholder="搜索角色、作品、标签..." autocomplete="off" autofocus> <!-- q 对应 web.py 里的 Query 参数。 -->
+      <input type="hidden" name="category" value="anime"> <!-- 隐藏分类字段，首版默认搜索动漫/角色。 -->
+      <button type="submit">搜索</button> <!-- 提交按钮。 -->
     </form>
   </main>
 </body>

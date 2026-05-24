@@ -1,0 +1,23 @@
+[
+  {"query": "爱莉希雅", "expected_top1": "local://anime/elysia", "expected_top3_contains": ["local://anime/elysia"], "notes": "角色名应优先返回对应角色资料。"},
+  {"query": "Elysia", "expected_top1": "local://anime/elysia", "expected_top3_contains": ["local://anime/elysia"], "notes": "英文名应命中爱莉希雅资料。"},
+  {"query": "芙莉莲", "expected_top1": "local://anime/frieren", "expected_top3_contains": ["local://anime/frieren"], "notes": "作品/角色名应返回芙莉莲介绍。"},
+  {"query": "魔法少女", "expected_top1": "local://anime/madoka", "expected_top3_contains": ["local://anime/madoka"], "notes": "题材词应返回魔法少女小圆。"},
+  {"query": "原神", "expected_top1": "local://anime/genshin", "expected_top3_contains": ["local://anime/genshin"], "notes": "游戏名应优先返回游戏总览。"},
+  {"query": "雷电将军", "expected_top1": "local://anime/raiden-shogun", "expected_top3_contains": ["local://anime/raiden-shogun"], "notes": "角色名应返回原神角色资料。"},
+  {"query": "纳西妲", "expected_top1": "local://anime/nahida", "expected_top3_contains": ["local://anime/nahida"], "notes": "角色名应返回纳西妲资料。"},
+  {"query": "崩坏：星穹铁道", "expected_top1": "local://anime/star-rail", "expected_top3_contains": ["local://anime/star-rail"], "notes": "完整作品名应返回游戏总览。"},
+  {"query": "三月七", "expected_top1": "local://anime/march-7th", "expected_top3_contains": ["local://anime/march-7th"], "notes": "角色名应返回三月七资料。"},
+  {"query": "明日方舟", "expected_top1": "local://anime/arknights", "expected_top3_contains": ["local://anime/arknights"], "notes": "游戏名应返回明日方舟总览。"},
+  {"query": "阿米娅", "expected_top1": "local://anime/amiya", "expected_top3_contains": ["local://anime/amiya"], "notes": "角色名应返回阿米娅资料。"},
+  {"query": "蔚蓝档案", "expected_top1": "local://anime/blue-archive", "expected_top3_contains": ["local://anime/blue-archive"], "notes": "游戏名应返回蔚蓝档案资料。"},
+  {"query": "初音未来", "expected_top1": "local://anime/miku", "expected_top3_contains": ["local://anime/miku"], "notes": "虚拟歌姬名应返回初音未来资料。"},
+  {"query": "Saber", "expected_top1": "local://anime/saber", "expected_top3_contains": ["local://anime/saber"], "notes": "英文角色名应返回 Fate 角色资料。"},
+  {"query": "亚丝娜", "expected_top1": "local://anime/asuna", "expected_top3_contains": ["local://anime/asuna"], "notes": "角色名应返回刀剑神域角色资料。"},
+  {"query": "鬼灭之刃", "expected_top1": "local://anime/nezuko", "expected_top3_contains": ["local://anime/nezuko"], "notes": "作品名应至少召回对应角色资料。"},
+  {"query": "阿尼亚", "expected_top1": "local://anime/anya", "expected_top3_contains": ["local://anime/anya"], "notes": "角色名应返回间谍过家家角色资料。"},
+  {"query": "轻音少女", "expected_top1": "local://anime/k-on", "expected_top3_contains": ["local://anime/k-on"], "notes": "作品名应返回轻音少女资料。"},
+  {"query": "命运石之门", "expected_top1": "local://anime/steins-gate", "expected_top3_contains": ["local://anime/steins-gate"], "notes": "作品名应返回命运石之门资料。"},
+  {"query": "EVA", "expected_top1": "local://anime/eva", "expected_top3_contains": ["local://anime/eva"], "notes": "英文简称应返回新世纪福音战士资料。"},
+  {"query": "Cosplay", "expected_top1": "local://anime/cosplay", "expected_top3_contains": ["local://anime/cosplay"], "notes": "二次元文化词应返回 cosplay 资料。"}
+]

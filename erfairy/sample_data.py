@@ -1,22 +1,62 @@
-from __future__ import annotations
+"""内置样例数据模块。
 
-from .models import SearchDocument
+项目简介：
+    ER Fairy Typewriter 首版即使不接入真实网站，也需要一批可搜索文档来演示完整搜索流程。
+
+开发目的：
+    提供二次元/动漫/游戏/角色方向的本地种子数据，方便新手启动项目后立即搜索和观察排序效果。
+
+技术栈：
+    SearchDocument 数据模型、列表常量、工厂函数。
+
+学习目标：
+    1. 理解搜索引擎需要“文档集合”作为索引输入。
+    2. 理解样例数据如何模拟爬虫解析后的结构化文档。
+    3. 理解 slug、title、summary、content、tags 这些字段分别服务于什么搜索场景。
+
+设计思路：
+    与其把这些样例直接写进 SQLite，不如保留为 Python 常量；这样版本控制可见、测试可复用、启动时可 upsert。
+
+知识点与免费文档：
+    - Python 数据结构 list: https://docs.python.org/3/tutorial/datastructures.html
+    - dataclasses 对象创建: https://docs.python.org/3/library/dataclasses.html
+"""
+
+from __future__ import annotations  # 推迟类型注解解析。
+
+from .models import SearchDocument  # 导入统一文档模型，保证样例数据和真实爬虫数据结构一致。
 
 
 def _doc(slug: str, title: str, summary: str, content: str, tags: list[str]) -> SearchDocument:
+    """创建一篇本地样例文档。
+
+    入参：
+        slug: 本地伪 URL 的最后一段，例如 genshin。
+        title: 搜索结果标题。
+        summary: 搜索结果摘要。
+        content: 可被索引的正文。
+        tags: 标签/别名/分类词。
+
+    出参：
+        SearchDocument。
+
+    设计思路：
+        用工厂函数减少重复字段，例如 category/source/image_url；比每条数据手写完整对象更不容易出错。
+    """
+
     return SearchDocument(
-        url=f"local://anime/{slug}",
-        title=title,
-        summary=summary,
-        content=content,
-        tags=tags,
-        category="anime",
-        source="sample",
-        image_url="",
+        url=f"local://anime/{slug}",  # local:// 表示本地样例，不是真实网页地址。
+        title=title,  # 标题字段，索引权重最高。
+        summary=summary,  # 摘要字段，用于结果页片段展示。
+        content=content,  # 正文字段，用于召回更多关键词。
+        tags=tags,  # 标签字段，用于作品名/角色名/别名精准召回。
+        category="anime",  # 首版统一归入 anime 分类。
+        source="sample",  # 标记来源是内置样例。
+        image_url="",  # 样例暂不配置图片，后续可扩展。
     )
 
 
-SAMPLE_DOCUMENTS = [
+SAMPLE_DOCUMENTS = [  # 启动时 web.py 会 upsert 这些文档，然后重建索引。
     _doc(
         "frieren",
         "葬送的芙莉莲 角色与作品介绍",

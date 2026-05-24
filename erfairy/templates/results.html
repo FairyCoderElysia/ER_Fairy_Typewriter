@@ -1,54 +1,73 @@
-<!doctype html>
-<html lang="zh-CN">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{ query }} - ER Fairy Typewriter</title>
-  <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
+<!--
+  ER Fairy Typewriter 搜索结果页模板。
+
+  项目简介：
+    展示 /search 路由返回的搜索结果、摘要、高亮、标签和分页入口。
+
+  技术栈：
+    HTML5、Jinja2 条件/循环语法、FastAPI 模板上下文。
+
+  学习目标：
+    1. 理解后端 payload 如何传入模板。
+    2. 理解 Jinja2 条件语句和循环语句如何渲染不同状态。
+    3. 理解为什么 snippet 使用 |safe：search.py 已先做 html.escape，再插入 <mark>。
+
+  知识点与免费文档：
+    - Jinja2 控制结构: https://jinja.palletsprojects.com/en/stable/templates/#list-of-control-structures
+    - HTML 语义标签: https://developer.mozilla.org/en-US/docs/Glossary/Semantics
+    - HTML 链接: https://developer.mozilla.org/en-US/docs/Web/HTML/Element/a
+-->
+<!doctype html> <!-- HTML5 文档模式。 -->
+<html lang="zh-CN"> <!-- 页面语言设置为中文。 -->
+<head> <!-- 页面元信息区域。 -->
+  <meta charset="utf-8"> <!-- UTF-8 保证中文正常显示。 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1"> <!-- 适配移动端宽度。 -->
+  <title>{{ query }} - ER Fairy Typewriter</title> <!-- Jinja2 变量：把查询词放入标题。 -->
+  <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}"> <!-- 引入静态 CSS。 -->
 </head>
-<body>
-  <header class="topbar">
-    <a class="brand" href="/">ER Fairy Typewriter</a>
-    <form class="search-box compact" action="/search" method="get">
-      <input name="q" type="search" value="{{ query }}" placeholder="搜索角色、作品、标签..." autocomplete="off">
-      <input type="hidden" name="category" value="{{ category }}">
-      <button type="submit">搜索</button>
+<body> <!-- 页面主体。 -->
+  <header class="topbar"> <!-- 顶部搜索栏。 -->
+    <a class="brand" href="/">ER Fairy Typewriter</a> <!-- 品牌链接，点击回首页。 -->
+    <form class="search-box compact" action="/search" method="get"> <!-- 结果页上的紧凑搜索框。 -->
+      <input name="q" type="search" value="{{ query }}" placeholder="搜索角色、作品、标签..." autocomplete="off"> <!-- 保留当前查询词。 -->
+      <input type="hidden" name="category" value="{{ category }}"> <!-- 保留当前分类。 -->
+      <button type="submit">搜索</button> <!-- 重新搜索。 -->
     </form>
   </header>
-  <main class="results-layout">
-    <aside class="filters">
-      <a class="active" href="/search?q={{ query }}&category=anime">动漫/角色</a>
+  <main class="results-layout"> <!-- 结果页主体网格。 -->
+    <aside class="filters"> <!-- 侧边筛选栏，后续可扩展游戏/资讯/coser。 -->
+      <a class="active" href="/search?q={{ query }}&category=anime">动漫/角色</a> <!-- 当前分类入口。 -->
     </aside>
-    <section class="results">
-      {% if query %}
-        <p class="meta">找到 {{ total }} 条结果</p>
+    <section class="results"> <!-- 搜索结果列表。 -->
+      {% if query %} <!-- 有查询词时展示命中总数。 -->
+        <p class="meta">找到 {{ total }} 条结果</p> <!-- total 来自 SearchService.search 返回值。 -->
       {% endif %}
-      {% if not query %}
-        <p class="empty">输入关键词开始搜索。</p>
-      {% elif results %}
-        {% for item in results %}
-          <article class="result-item">
-            <a class="result-title" href="{{ item.url }}">{{ item.title }}</a>
-            <p class="result-url">{{ item.source or item.url }} · 相关度 {{ '%.3f'|format(item.score) }}</p>
-            <p class="snippet">{{ item.snippet | safe }}</p>
-            {% if item.tags %}
-              <div class="tags">
-                {% for tag in item.tags %}
-                  <span>{{ tag }}</span>
+      {% if not query %} <!-- 空查询状态。 -->
+        <p class="empty">输入关键词开始搜索。</p> <!-- 提示用户输入关键词。 -->
+      {% elif results %} <!-- 有结果状态。 -->
+        {% for item in results %} <!-- 遍历每条搜索结果。 -->
+          <article class="result-item"> <!-- article 表示一条独立结果。 -->
+            <a class="result-title" href="{{ item.url }}">{{ item.title }}</a> <!-- 结果标题和来源链接。 -->
+            <p class="result-url">{{ item.source or item.url }} · 相关度 {{ '%.3f'|format(item.score) }}</p> <!-- 来源与分数。 -->
+            <p class="snippet">{{ item.snippet | safe }}</p> <!-- 高亮摘要；safe 只用于已转义内容。 -->
+            {% if item.tags %} <!-- 有标签才渲染标签区。 -->
+              <div class="tags"> <!-- 标签容器。 -->
+                {% for tag in item.tags %} <!-- 遍历标签。 -->
+                  <span>{{ tag }}</span> <!-- 单个标签。 -->
                 {% endfor %}
               </div>
             {% endif %}
           </article>
         {% endfor %}
-        <nav class="pager">
-          {% if page > 1 %}
+        <nav class="pager"> <!-- 分页导航。 -->
+          {% if page > 1 %} <!-- 不是第一页时显示上一页。 -->
             <a href="/search?q={{ query }}&category={{ category }}&page={{ page - 1 }}">上一页</a>
           {% endif %}
-          {% if page * per_page < total %}
+          {% if page * per_page < total %} <!-- 当前页末尾还没覆盖 total 时显示下一页。 -->
             <a href="/search?q={{ query }}&category={{ category }}&page={{ page + 1 }}">下一页</a>
           {% endif %}
         </nav>
-      {% else %}
+      {% else %} <!-- 有查询但无结果状态。 -->
         <p class="empty">没有找到匹配结果，可以换一个角色名、作品名或标签试试。</p>
       {% endif %}
     </section>
