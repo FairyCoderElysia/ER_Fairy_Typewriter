@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 from pathlib import Path
 
@@ -6,7 +8,7 @@ from erfairy.sample_data import SAMPLE_DOCUMENTS
 from erfairy.store import SQLiteDocumentStore
 
 
-def test_sample_search_eval_set(tmp_path):
+def test_sample_search_eval_set(tmp_path, request):
     store = SQLiteDocumentStore(tmp_path / "eval.sqlite3")
     documents = store.bulk_upsert(SAMPLE_DOCUMENTS)
     index = InMemoryTfIdfIndex()
@@ -35,6 +37,16 @@ def test_sample_search_eval_set(tmp_path):
     top1_accuracy = top1_hits / total_cases
     top3_accuracy = top3_hits / total_cases
     zero_result_rate = zero_results / total_cases
+
+    request.config._search_eval_summary = {
+        "total_cases": total_cases,
+        "top1_hits": top1_hits,
+        "top3_hits": top3_hits,
+        "zero_results": zero_results,
+        "top1_accuracy": top1_accuracy,
+        "top3_accuracy": top3_accuracy,
+        "zero_result_rate": zero_result_rate,
+    }
 
     assert top1_accuracy >= 0.8
     assert top3_accuracy >= 0.95

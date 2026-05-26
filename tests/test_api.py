@@ -49,3 +49,30 @@ def test_debug_index_returns_index_stats():
     assert payload["document_count"] >= 1
     assert payload["term_count"] >= 1
     assert payload["posting_count"] >= payload["term_count"]
+
+
+def test_crawl_and_reindex_can_be_disabled(monkeypatch):
+    monkeypatch.setenv("ERFAIRY_DEV_MUTATIONS", "0")
+
+    from importlib import reload
+    import erfairy.web as web_module
+
+    reload(web_module)
+
+    with TestClient(web_module.app) as client:
+        crawl_response = client.post(
+            "/crawl",
+            json={
+                "seeds": ["https://example.com/wiki/anime"],
+                "max_pages": 1,
+                "max_depth": 0,
+                "delay_seconds": 0.0,
+                "category": "anime",
+            },
+        )
+        reindex_response = client.post("/reindex")
+
+    assert crawl_response.status_code == 200
+    assert "开发写入接口已关闭" in crawl_response.json()["detail"]
+    assert reindex_response.status_code == 200
+    assert "开发写入接口已关闭" in reindex_response.json()["detail"]

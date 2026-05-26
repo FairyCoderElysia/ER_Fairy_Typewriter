@@ -48,69 +48,49 @@ def utc_now_iso() -> str:
 
 @dataclass(slots=True)  # slots=True 减少对象内存开销；文档多起来后比普通对象更省。
 class SearchDocument:
-    """搜索引擎内部统一使用的“文档”结构。
+    """??????????????????"""
 
-    入参/字段：
-        url: 文档唯一来源地址，本项目用它做去重依据。
-        title: 搜索结果标题，通常权重最高。
-        content: 正文内容，是召回更多结果的主要来源。
-        summary: 摘要，负责结果页展示和片段生成。
-        tags: 标签/别名/类别词，用来提升二次元角色、作品名的召回。
-        category: 分类，首版默认为 anime，后续可扩展 game/coser/news。
-        source: 来源站点或 sample，方便用户判断出处。
-        published_at: 原网页发布时间，首版不参与主排序。
-        crawled_at: 抓取入库时间。
-        image_url: 结果卡片预留图片字段。
-        id: SQLite 入库后生成的主键；入库前可以是 None。
-
-    出参：
-        dataclass 实例，可通过 as_dict() 转成 API/模板需要的 dict。
-
-    使用场景：
-        parser 产出 SearchDocument，store 保存它，indexer 读取它，search 返回它。
-    """
-
-    url: str  # 文档地址；设计上要求唯一，避免同一页面被重复索引。
-    title: str  # 标题字段；搜索排序中会获得更高权重。
-    content: str  # 正文字段；用于构建倒排索引的主体文本。
-    summary: str = ""  # 摘要字段；没有摘要时 search.py 会退回使用 content。
-    tags: list[str] = field(default_factory=list)  # 用 default_factory 避免多个文档共享同一个 list。
-    category: str = "anime"  # 默认分类；比写死在搜索函数里更利于后续扩展。
-    source: str = ""  # 来源展示字段；真实爬虫会写入域名。
-    published_at: str = ""  # 发布时间先保留为字符串，避免不同站点时间格式过早复杂化。
-    crawled_at: str = field(default_factory=utc_now_iso)  # 每次创建文档时动态生成当前时间。
-    image_url: str = ""  # 图片地址预留字段；首版页面暂未重点使用。
-    id: int | None = None  # SQLite 主键；未保存前为空，保存后由 store.py 回填。
+    url: str
+    title: str
+    content: str
+    summary: str = ""
+    tags: list[str] = field(default_factory=list)
+    aliases: list[str] = field(default_factory=list)
+    entity_type: str = ""
+    game_title: str = ""
+    character_name: str = ""
+    source_score: float = 0.0
+    category: str = "anime"
+    source: str = ""
+    published_at: str = ""
+    crawled_at: str = field(default_factory=utc_now_iso)
+    image_url: str = ""
+    id: int | None = None
 
     def as_dict(self) -> dict[str, Any]:
-        """把文档对象转成普通字典。
+        """????????????"""
 
-        入参：
-            self: 当前 SearchDocument。
-
-        出参：
-            dict，可被 FastAPI 自动序列化成 JSON，也可传给 Jinja2 模板。
-
-        设计思路：
-            不直接暴露 __dict__，是为了明确 API 返回哪些字段，避免未来对象内部字段意外泄露。
-        """
-
-        return {  # 逐项列出字段，保持 API 输出稳定。
-            "id": self.id,  # 文档主键。
-            "url": self.url,  # 来源 URL。
-            "title": self.title,  # 标题。
-            "content": self.content,  # 正文；真实产品里可考虑不向前端全量返回。
-            "summary": self.summary,  # 摘要。
-            "tags": self.tags,  # 标签列表。
-            "category": self.category,  # 分类。
-            "source": self.source,  # 来源。
-            "published_at": self.published_at,  # 发布时间。
-            "crawled_at": self.crawled_at,  # 抓取时间。
-            "image_url": self.image_url,  # 图片地址。
+        return {
+            "id": self.id,
+            "url": self.url,
+            "title": self.title,
+            "content": self.content,
+            "summary": self.summary,
+            "tags": self.tags,
+            "aliases": self.aliases,
+            "entity_type": self.entity_type,
+            "game_title": self.game_title,
+            "character_name": self.character_name,
+            "source_score": self.source_score,
+            "category": self.category,
+            "source": self.source,
+            "published_at": self.published_at,
+            "crawled_at": self.crawled_at,
+            "image_url": self.image_url,
         }
 
 
-@dataclass(slots=True)  # 搜索结果对象同样用 dataclass，代码短且字段清楚。
+@dataclass(slots=True)
 class SearchResult:
     """搜索结果结构，封装“文档 + 分数 + 高亮片段”。
 
@@ -249,4 +229,48 @@ class IndexStats:
             "term_count": self.term_count,
             "posting_count": self.posting_count,
             "last_rebuilt_at": self.last_rebuilt_at,
+        }
+
+
+@dataclass(slots=True)
+class CrawlError:
+    """爬虫在抓取过程中记录的一条失败信息。
+
+    使用场景：
+        `/crawl` 需要把抓取失败、robots 拒绝、解析失败等信息保存到 SQLite，方便以后做状态页。
+    """
+
+    url: str  # 出错的页面 URL。
+    stage: str  # 出错阶段，例如 robots/fetch/parse/domain。
+    message: str  # 人能看懂的失败原因。
+    depth: int = 0  # 当前抓取深度。
+    category: str = "anime"  # 文档分类。
+    crawled_at: str = field(default_factory=utc_now_iso)  # 记录失败时间，便于回看。
+
+    def as_dict(self) -> dict[str, Any]:
+        """转成 JSON 友好的字典。"""
+
+        return {
+            "url": self.url,
+            "stage": self.stage,
+            "message": self.message,
+            "depth": self.depth,
+            "category": self.category,
+            "crawled_at": self.crawled_at,
+        }
+
+
+@dataclass(slots=True)
+class CrawlResult:
+    """一次爬取运行的结果。"""
+
+    documents: list[SearchDocument]  # 成功抓取并解析出的文档。
+    errors: list[CrawlError]  # 抓取过程中的失败记录。
+
+    def as_dict(self) -> dict[str, Any]:
+        """转成 API 友好的字典。"""
+
+        return {
+            "documents": [document.as_dict() for document in self.documents],
+            "errors": [error.as_dict() for error in self.errors],
         }

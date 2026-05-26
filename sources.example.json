@@ -1,0 +1,35 @@
+[
+  {
+    "name": "本地二次元样例站",
+    "entry_url": "http://127.0.0.1:8000/",
+    "allowed_domains": ["127.0.0.1", "localhost"],
+    "category": "anime",
+    "max_pages": 20,
+    "max_depth": 1,
+    "delay_seconds": 0.5,
+    "parse_strategy": "default",
+    "notes": "用于本地 fixture 或静态 HTML 页面测试"
+  },
+  {
+    "name": "二游资讯站",
+    "entry_url": "https://example.com/wiki/games",
+    "allowed_domains": ["example.com"],
+    "category": "news",
+    "max_pages": 10,
+    "max_depth": 1,
+    "delay_seconds": 1.0,
+    "parse_strategy": "article-first",
+    "notes": "先用小规模公开页面或本地镜像验证解析规则"
+  },
+  {
+    "name": "角色资料站",
+    "entry_url": "https://example.com/wiki/characters",
+    "allowed_domains": ["example.com"],
+    "category": "character",
+    "max_pages": 10,
+    "max_depth": 1,
+    "delay_seconds": 1.0,
+    "parse_strategy": "meta-first",
+    "notes": "适合验证别名、标题命中和角色卡片解析"
+  }
+]

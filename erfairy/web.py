@@ -36,7 +36,7 @@ from fastapi.templating import Jinja2Templates  # 渲染 HTML 模板。
 from pydantic import BaseModel, Field  # 定义请求体模型和字段校验规则。
 
 from .crawler import CrawlConfig, SmallCrawler  # 爬虫配置和爬虫实现。
-from .indexer import InMemoryTfIdfIndex  # 内存搜索索引。
+from .indexer import InMemoryTfIdfIndex, SearchIndex  # 内存搜索索引和接口。
 from .sample_data import SAMPLE_DOCUMENTS  # 内置样例资料。
 from .search import SearchService  # 搜索服务层。
 from .store import SQLiteDocumentStore  # SQLite 文档存储。
@@ -47,8 +47,9 @@ PROJECT_DIR = BASE_DIR.parent  # 项目根目录。
 DATA_PATH = Path(os.getenv("ERFAIRY_DB", PROJECT_DIR / "data" / "erfairy.sqlite3"))  # 允许用环境变量覆盖数据库路径。
 
 store = SQLiteDocumentStore(DATA_PATH)  # 文档持久化层。
-index = InMemoryTfIdfIndex()  # 搜索索引层。
+index: SearchIndex = InMemoryTfIdfIndex()  # 搜索索引层，类型先抽象成接口，便于后续切换实现。
 search_service = SearchService(index)  # 搜索服务层，封装分页和高亮。
+DEV_MUTATION_ENABLED = os.getenv("ERFAIRY_DEV_MUTATIONS", "1").lower() not in {"0", "false", "no"}  # 本地开发接口默认开启。
 
 
 @asynccontextmanager
@@ -159,9 +160,12 @@ def crawl(request: CrawlRequest):
         开发阶段手动 POST 一批种子 URL，扩充搜索资料。
     """
 
+    if not DEV_MUTATION_ENABLED:  # 生产环境可通过环境变量关闭抓取和重建接口。
+        return {"detail": "开发写入接口已关闭，请设置 ERFAIRY_DEV_MUTATIONS=1 后再使用"}  # 明确提示。
+
     allowed_domains = {urlparse(seed).netloc for seed in request.seeds}  # 默认只允许抓种子域名。
     crawler = SmallCrawler()  # 创建爬虫实例。
-    documents = crawler.crawl(  # 执行爬取。
+    result = crawler.crawl(  # 执行爬取。
         CrawlConfig(  # 把请求体转换成爬虫配置。
             seeds=request.seeds,  # 种子 URL。
             max_pages=request.max_pages,  # 页数上限。
@@ -171,14 +175,27 @@ def crawl(request: CrawlRequest):
             category=request.category,  # 文档分类。
         )
     )
-    saved = store.bulk_upsert(documents)  # 保存抓取文档。
+    run_id = store.start_crawl_run(category=request.category)  # 记录这次抓取运行。
+    saved = store.bulk_upsert(result.documents)  # 保存抓取文档。
+    store.save_crawl_errors(run_id, result.errors)  # 保存抓取失败记录。
+    store.finish_crawl_run(  # 更新运行结束状态。
+        run_id,
+        source_count=len(request.seeds),
+        saved_count=len(saved),
+        error_count=len(result.errors),
+        category=request.category,
+        status="completed",
+    )
     index.rebuild(store.all())  # 数据变化后重建索引，保证立即可搜。
-    return {"saved": len(saved), "total_documents": store.count()}  # 返回本次保存数和总文档数。
+    return {"saved": len(saved), "errors": len(result.errors), "total_documents": store.count()}  # 返回本次保存数、错误数和总文档数。
 
 
 @app.post("/reindex")  # 开发接口：重建索引。
 def reindex():
     """从 SQLite 重新构建内存索引。"""
+
+    if not DEV_MUTATION_ENABLED:  # 生产环境可通过环境变量关闭。
+        return {"detail": "开发写入接口已关闭，请设置 ERFAIRY_DEV_MUTATIONS=1 后再使用"}  # 明确提示。
 
     index.rebuild(store.all())  # 全量重建索引。
     return {"indexed": len(index.documents)}  # 返回索引中文档数量。

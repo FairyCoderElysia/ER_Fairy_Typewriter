@@ -31,7 +31,7 @@ from urllib.robotparser import RobotFileParser  # 读取 robots.txt。
 
 import requests  # HTTP 请求库。
 
-from .models import SearchDocument  # 爬虫最终产出文档。
+from .models import CrawlError, CrawlResult, SearchDocument  # 爬虫最终产出文档和错误记录。
 from .parser import AnimePageParser  # HTML 解析器。
 
 
@@ -72,20 +72,21 @@ class SmallCrawler:
         self.parser = parser or AnimePageParser()  # 没传解析器就使用默认解析器。
         self._robots: dict[str, RobotFileParser] = {}  # 缓存每个站点的 robots.txt，避免重复请求。
 
-    def crawl(self, config: CrawlConfig) -> list[SearchDocument]:
+    def crawl(self, config: CrawlConfig) -> CrawlResult:
         """根据配置开始爬取。
 
         入参：
             config: CrawlConfig。
 
         出参：
-            list[SearchDocument]，抓取并解析成功的文档。
+            CrawlResult，包含抓取成功的文档和失败记录。
         """
 
         allowed_domains = config.allowed_domains or {urlparse(seed).netloc for seed in config.seeds}  # 默认只抓种子域名。
         queue = deque((seed, 0) for seed in config.seeds)  # 队列元素是 (url, depth)。
         visited: set[str] = set()  # 已访问 URL，避免循环抓取。
         documents: list[SearchDocument] = []  # 成功解析出的文档。
+        errors: list[CrawlError] = []  # 抓取过程中的错误记录。
 
         while queue and len(documents) < config.max_pages:  # 队列非空且未达到页数上限时继续。
             url, depth = queue.popleft()  # BFS：从队列左侧取出最早加入的链接。
@@ -95,17 +96,26 @@ class SmallCrawler:
 
             parsed = urlparse(url)  # 解析协议和域名。
             if parsed.scheme not in {"http", "https"} or parsed.netloc not in allowed_domains:  # 非网页链接或跨域链接跳过。
+                errors.append(CrawlError(url=url, stage="domain", message="URL 不在允许域名范围内", depth=depth, category=config.category))
                 continue
             if not self._allowed_by_robots(url, config.user_agent):  # robots.txt 不允许时跳过。
+                errors.append(CrawlError(url=url, stage="robots", message="robots.txt 不允许抓取", depth=depth, category=config.category))
                 continue
 
             html = self._fetch(url, config.user_agent)  # 下载 HTML。
             if not html:  # 下载失败或不是 HTML。
+                errors.append(CrawlError(url=url, stage="fetch", message="网页下载失败或不是 HTML 页面", depth=depth, category=config.category))
                 continue
 
-            document, links = self.parser.parse(html, url, category=config.category)  # 解析文档和页面链接。
+            try:
+                document, links = self.parser.parse(html, url, category=config.category)  # 解析文档和页面链接。
+            except Exception as exc:  # 解析器异常不能中断整个爬取。
+                errors.append(CrawlError(url=url, stage="parse", message=str(exc), depth=depth, category=config.category))
+                continue
             if document.content:  # 有正文才保存，避免空页面污染索引。
                 documents.append(document)
+            else:
+                errors.append(CrawlError(url=url, stage="parse", message="页面没有可索引正文", depth=depth, category=config.category))
 
             if depth < config.max_depth:  # 未达到深度上限时才扩展链接。
                 for link in links:  # 遍历解析出的链接。
@@ -114,7 +124,7 @@ class SmallCrawler:
 
             time.sleep(config.delay_seconds)  # 礼貌等待，避免请求过快。
 
-        return documents  # 返回抓到的文档。
+        return CrawlResult(documents=documents, errors=errors)  # 返回抓到的文档和错误记录。
 
     def _fetch(self, url: str, user_agent: str) -> str:
         """下载一个 HTML 页面。

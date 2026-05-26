@@ -1,77 +1,34 @@
 """SQLite 文档存储模块。
 
-项目简介：
-    搜索引擎不能只靠内存索引；原始文档和结构化字段需要持久化保存，进程重启后才能恢复。
-
-开发目的：
-    用 SQLite 做轻量文档库，保存 SearchDocument，再在启动时从 SQLite 重建内存索引。
-
-技术栈：
-    sqlite3、SQL DDL/DML、UPSERT、JSON 序列化、pathlib。
-
-学习目标：
-    1. 理解“文档存储”和“搜索索引”是两层不同职责。
-    2. 理解 SQLite 表结构如何映射 Python dataclass。
-    3. 理解 UPSERT 如何用 url 做去重更新。
-
-知识点与免费文档：
-    - sqlite3: https://docs.python.org/3/library/sqlite3.html
-    - SQLite UPSERT: https://www.sqlite.org/lang_upsert.html
-    - json: https://docs.python.org/3/library/json.html
-    - pathlib: https://docs.python.org/3/library/pathlib.html
+负责把 SearchDocument 持久化到本地 SQLite，并保存爬取运行与错误记录。
 """
 
-from __future__ import annotations  # 让 Path | str 这类类型注解保持兼容。
+from __future__ import annotations
 
-import json  # SQLite 没有原生 list 类型，这里用 JSON 字符串保存 tags。
-import sqlite3  # Python 标准库 SQLite 驱动，适合轻量本地项目。
-from pathlib import Path  # 比字符串路径更安全、可读。
-from typing import Iterable  # Iterable 表示可遍历的一批文档。
+import json
+import sqlite3
+from pathlib import Path
+from typing import Iterable
 
-from .models import SearchDocument  # 文档模型。
+from .models import CrawlError, SearchDocument
 
 
 class SQLiteDocumentStore:
-    """SQLite 文档仓库。
-
-    入参：
-        db_path: SQLite 数据库文件路径，默认 data/erfairy.sqlite3。
-
-    使用场景：
-        web.py 启动时写入样例数据；/crawl 抓取后写入新文档；/reindex 从这里读取所有文档。
-
-    设计思路：
-        SQLite 零部署、单文件、适合学习；缺点是并发写入能力不如 PostgreSQL/MySQL。
-    """
+    """轻量文档仓库。"""
 
     def __init__(self, db_path: str | Path = "data/erfairy.sqlite3") -> None:
-        self.db_path = Path(db_path)  # 统一转成 Path，后续可使用 parent/mkdir 等方法。
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)  # 确保 data/ 目录存在。
-        self._init_schema()  # 初始化表结构，保证第一次运行也能直接使用。
+        self.db_path = Path(db_path)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._init_schema()
 
     def connect(self) -> sqlite3.Connection:
-        """创建一个 SQLite 连接。
-
-        出参：
-            sqlite3.Connection，row_factory 已设为 sqlite3.Row。
-
-        设计思路：
-            每个方法短连接 + with 自动提交/关闭，MVP 更简单；高并发服务可改为连接池。
-        """
-
-        conn = sqlite3.connect(self.db_path)  # 连接到数据库文件，不存在时 SQLite 会创建。
-        conn.row_factory = sqlite3.Row  # 让查询结果可用 row["title"] 访问，比 tuple 下标更清晰。
-        return conn  # 返回连接给调用方用 with 管理生命周期。
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
 
     def _init_schema(self) -> None:
-        """创建 documents 表和分类索引。
-
-        设计思路：
-            表结构对应 SearchDocument 字段；url 设置 UNIQUE，支持后续 upsert 去重。
-        """
-
-        with self.connect() as conn:  # with 结束时自动提交事务并关闭连接。
-            conn.execute(  # 执行建表 SQL。
+        with self.connect() as conn:
+            conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS documents (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -80,6 +37,11 @@ class SQLiteDocumentStore:
                     content TEXT NOT NULL,
                     summary TEXT NOT NULL DEFAULT '',
                     tags TEXT NOT NULL DEFAULT '[]',
+                    aliases TEXT NOT NULL DEFAULT '[]',
+                    entity_type TEXT NOT NULL DEFAULT '',
+                    game_title TEXT NOT NULL DEFAULT '',
+                    character_name TEXT NOT NULL DEFAULT '',
+                    source_score REAL NOT NULL DEFAULT 0.0,
                     category TEXT NOT NULL DEFAULT 'anime',
                     source TEXT NOT NULL DEFAULT '',
                     published_at TEXT NOT NULL DEFAULT '',
@@ -88,132 +50,233 @@ class SQLiteDocumentStore:
                 )
                 """
             )
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_documents_category ON documents(category)")  # 分类过滤常用，单独建索引。
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_documents_category ON documents(category)")
+            self._ensure_document_columns(conn)
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS crawl_runs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    started_at TEXT NOT NULL,
+                    finished_at TEXT NOT NULL DEFAULT '',
+                    source_count INTEGER NOT NULL DEFAULT 0,
+                    saved_count INTEGER NOT NULL DEFAULT 0,
+                    error_count INTEGER NOT NULL DEFAULT 0,
+                    category TEXT NOT NULL DEFAULT 'anime',
+                    status TEXT NOT NULL DEFAULT 'running'
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS crawl_errors (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    crawl_run_id INTEGER NOT NULL,
+                    url TEXT NOT NULL,
+                    stage TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    depth INTEGER NOT NULL DEFAULT 0,
+                    category TEXT NOT NULL DEFAULT 'anime',
+                    crawled_at TEXT NOT NULL,
+                    FOREIGN KEY (crawl_run_id) REFERENCES crawl_runs(id)
+                )
+                """
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_crawl_errors_run_id ON crawl_errors(crawl_run_id)")
+
+    def _ensure_document_columns(self, conn: sqlite3.Connection) -> None:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(documents)").fetchall()}
+        column_defs = {
+            "aliases": "TEXT NOT NULL DEFAULT '[]'",
+            "entity_type": "TEXT NOT NULL DEFAULT ''",
+            "game_title": "TEXT NOT NULL DEFAULT ''",
+            "character_name": "TEXT NOT NULL DEFAULT ''",
+            "source_score": "REAL NOT NULL DEFAULT 0.0",
+        }
+        for name, ddl in column_defs.items():
+            if name not in columns:
+                conn.execute(f"ALTER TABLE documents ADD COLUMN {name} {ddl}")
 
     def upsert(self, document: SearchDocument) -> SearchDocument:
-        """插入或更新一篇文档。
-
-        入参：
-            document: 待保存文档。
-
-        出参：
-            SearchDocument，同一个对象会被回填 id。
-
-        设计思路：
-            url 是天然去重键；重复抓取同一 URL 时更新内容，不制造重复文档。
-        """
-
-        tags_json = json.dumps(document.tags, ensure_ascii=False)  # list[str] 转 JSON 字符串；ensure_ascii=False 保留中文可读性。
-        with self.connect() as conn:  # 打开一次数据库连接。
-            conn.execute(  # 使用参数化 SQL，避免字符串拼接造成 SQL 注入风险。
+        tags_json = json.dumps(document.tags, ensure_ascii=False)
+        aliases_json = json.dumps(document.aliases, ensure_ascii=False)
+        with self.connect() as conn:
+            conn.execute(
                 """
                 INSERT INTO documents (
-                    url, title, content, summary, tags, category, source,
+                    url, title, content, summary, tags, aliases, entity_type,
+                    game_title, character_name, source_score, category, source,
                     published_at, crawled_at, image_url
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(url) DO UPDATE SET
                     title=excluded.title,
                     content=excluded.content,
                     summary=excluded.summary,
                     tags=excluded.tags,
+                    aliases=excluded.aliases,
+                    entity_type=excluded.entity_type,
+                    game_title=excluded.game_title,
+                    character_name=excluded.character_name,
+                    source_score=excluded.source_score,
                     category=excluded.category,
                     source=excluded.source,
                     published_at=excluded.published_at,
                     crawled_at=excluded.crawled_at,
                     image_url=excluded.image_url
                 """,
-                (  # ? 占位符对应的参数元组。
-                    document.url,  # 唯一 URL。
-                    document.title,  # 标题。
-                    document.content,  # 正文。
-                    document.summary,  # 摘要。
-                    tags_json,  # 标签 JSON。
-                    document.category,  # 分类。
-                    document.source,  # 来源。
-                    document.published_at,  # 发布时间。
-                    document.crawled_at,  # 抓取时间。
-                    document.image_url,  # 图片地址。
+                (
+                    document.url,
+                    document.title,
+                    document.content,
+                    document.summary,
+                    tags_json,
+                    aliases_json,
+                    document.entity_type,
+                    document.game_title,
+                    document.character_name,
+                    document.source_score,
+                    document.category,
+                    document.source,
+                    document.published_at,
+                    document.crawled_at,
+                    document.image_url,
                 ),
             )
-            row = conn.execute("SELECT id FROM documents WHERE url = ?", (document.url,)).fetchone()  # 查询最终 id。
-        document.id = int(row["id"])  # 回填 id，后续 indexer 必须依赖它。
-        return document  # 返回带 id 的文档。
+            row = conn.execute("SELECT id FROM documents WHERE url = ?", (document.url,)).fetchone()
+        document.id = int(row["id"])
+        return document
 
     def bulk_upsert(self, documents: Iterable[SearchDocument]) -> list[SearchDocument]:
-        """批量插入或更新文档。
-
-        入参：
-            documents: 任意可遍历文档集合。
-
-        出参：
-            list[SearchDocument]，每篇文档都已回填 id。
-        """
-
-        return [self.upsert(document) for document in documents]  # MVP 逐条写入，逻辑直观；大规模可优化为批量事务。
+        return [self.upsert(document) for document in documents]
 
     def all(self) -> list[SearchDocument]:
-        """读取全部文档。
-
-        使用场景：
-            应用启动或 /reindex 时，用所有文档重建内存索引。
-        """
-
-        with self.connect() as conn:  # 打开数据库连接。
-            rows = conn.execute("SELECT * FROM documents ORDER BY id").fetchall()  # 按 id 保持稳定顺序。
-        return [self._row_to_document(row) for row in rows]  # 把数据库行转成 SearchDocument 对象。
+        with self.connect() as conn:
+            rows = conn.execute("SELECT * FROM documents ORDER BY id").fetchall()
+        return [self._row_to_document(row) for row in rows]
 
     def count(self) -> int:
-        """返回文档总数。"""
-
-        with self.connect() as conn:  # 打开连接。
-            row = conn.execute("SELECT COUNT(*) AS total FROM documents").fetchone()  # 聚合统计。
-        return int(row["total"])  # SQLite 返回数字，转 int 明确类型。
+        with self.connect() as conn:
+            row = conn.execute("SELECT COUNT(*) AS total FROM documents").fetchone()
+        return int(row["total"])
 
     def get(self, doc_id: int) -> SearchDocument | None:
-        """按 id 查询单篇文档。
-
-        入参：
-            doc_id: SQLite 主键。
-
-        出参：
-            SearchDocument 或 None。
-        """
-
-        with self.connect() as conn:  # 打开连接。
-            row = conn.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()  # 参数化查询单行。
-        return self._row_to_document(row) if row else None  # 查到则转换，查不到返回 None。
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
+        return self._row_to_document(row) if row else None
 
     def clear(self) -> None:
-        """清空文档表。
+        with self.connect() as conn:
+            conn.execute("DELETE FROM documents")
 
-        使用场景：
-            测试或开发时重置数据；生产环境要谨慎使用。
-        """
+    def start_crawl_run(self, category: str = "anime") -> int:
+        with self.connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO crawl_runs (started_at, category, status)
+                VALUES (?, ?, 'running')
+                """,
+                (self._utc_now_iso(), category),
+            )
+        return int(cursor.lastrowid)
 
-        with self.connect() as conn:  # 打开连接。
-            conn.execute("DELETE FROM documents")  # 删除所有文档。
+    def finish_crawl_run(
+        self,
+        crawl_run_id: int,
+        source_count: int,
+        saved_count: int,
+        error_count: int,
+        category: str = "anime",
+        status: str = "completed",
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE crawl_runs
+                SET finished_at = ?, source_count = ?, saved_count = ?, error_count = ?, category = ?, status = ?
+                WHERE id = ?
+                """,
+                (
+                    self._utc_now_iso(),
+                    source_count,
+                    saved_count,
+                    error_count,
+                    category,
+                    status,
+                    crawl_run_id,
+                ),
+            )
+
+    def save_crawl_errors(self, crawl_run_id: int, errors: Iterable[CrawlError]) -> list[CrawlError]:
+        error_list = list(errors)
+        if not error_list:
+            return []
+        with self.connect() as conn:
+            conn.executemany(
+                """
+                INSERT INTO crawl_errors (
+                    crawl_run_id, url, stage, message, depth, category, crawled_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        crawl_run_id,
+                        error.url,
+                        error.stage,
+                        error.message,
+                        error.depth,
+                        error.category,
+                        error.crawled_at,
+                    )
+                    for error in error_list
+                ],
+            )
+        return error_list
+
+    def crawl_errors_for_run(self, crawl_run_id: int) -> list[CrawlError]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT url, stage, message, depth, category, crawled_at
+                FROM crawl_errors
+                WHERE crawl_run_id = ?
+                ORDER BY id
+                """,
+                (crawl_run_id,),
+            ).fetchall()
+        return [
+            CrawlError(
+                url=row["url"],
+                stage=row["stage"],
+                message=row["message"],
+                depth=int(row["depth"]),
+                category=row["category"],
+                crawled_at=row["crawled_at"],
+            )
+            for row in rows
+        ]
 
     def _row_to_document(self, row: sqlite3.Row) -> SearchDocument:
-        """把 SQLite 行对象转换为 SearchDocument。
-
-        入参：
-            row: sqlite3.Row。
-
-        出参：
-            SearchDocument。
-        """
-
-        return SearchDocument(  # 字段一一映射，避免数据库层泄露到业务层。
-            id=int(row["id"]),  # 主键转 int。
-            url=row["url"],  # URL。
-            title=row["title"],  # 标题。
-            content=row["content"],  # 正文。
-            summary=row["summary"],  # 摘要。
-            tags=json.loads(row["tags"] or "[]"),  # JSON 字符串还原成 list[str]。
-            category=row["category"],  # 分类。
-            source=row["source"],  # 来源。
-            published_at=row["published_at"],  # 发布时间。
-            crawled_at=row["crawled_at"],  # 抓取时间。
-            image_url=row["image_url"],  # 图片地址。
+        return SearchDocument(
+            id=int(row["id"]),
+            url=row["url"],
+            title=row["title"],
+            content=row["content"],
+            summary=row["summary"],
+            tags=json.loads(row["tags"] or "[]"),
+            aliases=json.loads(row["aliases"] or "[]"),
+            entity_type=row["entity_type"],
+            game_title=row["game_title"],
+            character_name=row["character_name"],
+            source_score=float(row["source_score"] or 0.0),
+            category=row["category"],
+            source=row["source"],
+            published_at=row["published_at"],
+            crawled_at=row["crawled_at"],
+            image_url=row["image_url"],
         )
+
+    def _utc_now_iso(self) -> str:
+        from datetime import datetime, timezone
+
+        return datetime.now(timezone.utc).isoformat(timespec="seconds")
