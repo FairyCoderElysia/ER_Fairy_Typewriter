@@ -76,3 +76,11 @@ def test_crawl_and_reindex_can_be_disabled(monkeypatch):
     assert "开发写入接口已关闭" in crawl_response.json()["detail"]
     assert reindex_response.status_code == 200
     assert "开发写入接口已关闭" in reindex_response.json()["detail"]
+
+
+def test_crawl_request_defaults_to_auto_category():
+    from erfairy.web import CrawlRequest
+
+    request = CrawlRequest(seeds=["https://example.com/news"])
+
+    assert request.category == "auto"

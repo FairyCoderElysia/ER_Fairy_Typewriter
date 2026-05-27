@@ -27,6 +27,8 @@ FIELD_WEIGHTS = {
     "content": 1.0,
 }
 
+NEWS_INTENT_TERMS = {"最新", "活动", "版本", "公告", "新闻", "资讯", "更新", "前瞻"}
+
 
 class SearchIndex:
     """搜索索引接口。"""
@@ -260,4 +262,10 @@ class InMemoryTfIdfIndex(SearchIndex):
             boost += 0.6
         if query in summary:
             boost += 0.25
+        if document.entity_type == "news" and self._has_news_intent(query):
+            boost += 1.4
         return boost
+
+    def _has_news_intent(self, query: str) -> bool:
+        query_terms = set(tokenize(query))
+        return any(term in query or term in query_terms for term in NEWS_INTENT_TERMS)

@@ -19,5 +19,7 @@
   {"query": "轻音少女", "expected_top1": "local://anime/k-on", "expected_top3_contains": ["local://anime/k-on"], "notes": "作品名应返回轻音少女资料。"},
   {"query": "命运石之门", "expected_top1": "local://anime/steins-gate", "expected_top3_contains": ["local://anime/steins-gate"], "notes": "作品名应返回命运石之门资料。"},
   {"query": "EVA", "expected_top1": "local://anime/eva", "expected_top3_contains": ["local://anime/eva"], "notes": "英文简称应返回新世纪福音战士资料。"},
+  {"query": "雷神", "expected_top1": "local://anime/raiden-shogun", "expected_top3_contains": ["local://anime/raiden-shogun"], "notes": "角色别名应召回正式角色资料。"},
+  {"query": "最新活动", "expected_top1": "local://anime/genshin-version-news", "expected_top3_contains": ["local://anime/genshin-version-news", "local://anime/star-rail-version-news"], "notes": "资讯意图词应优先返回新闻/活动结果。"},
   {"query": "Cosplay", "expected_top1": "local://anime/cosplay", "expected_top3_contains": ["local://anime/cosplay"], "notes": "二次元文化词应返回 cosplay 资料。"}
 ]

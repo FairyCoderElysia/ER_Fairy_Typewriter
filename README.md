@@ -2,7 +2,7 @@
 
 爱莉希雅的妖精打字机：一个用于学习搜索引擎完整链路的轻量二次元搜索引擎 MVP。
 
-当前进度：阶段 4 已完成，项目已经具备“爬虫 -> 存储 -> 索引 -> 搜索 -> 调试解释 -> 评测”的完整闭环。
+当前进度：阶段 5 已完成，项目已经具备“fixture/公开站点 -> 爬虫 -> 解析 -> 去重存储 -> 索引 -> 搜索 -> 调试解释 -> 评测”的完整闭环。
 
 ## 功能
 
@@ -10,6 +10,8 @@
 - 页面解析：提取标题、正文、摘要、标签、来源、发布时间、图片和链接。
 - 文档存储：使用 SQLite 保存结构化文档。
 - 抓取记录：使用 `crawl_runs` 和 `crawl_errors` 保存抓取运行状态与失败原因。
+- 本地 fixture 采集：爬虫支持 `file://` HTML，用本地页面模拟真实站点。
+- 内容去重：解析器生成 `content_hash`，SQLite 用 URL、正文指纹和标题相似度避免重复入库。
 - 自研索引：使用中文/英文分词、字段权重、倒排索引和 TF-IDF/余弦相似度排序。
 - 索引抽象：`SearchIndex` 定义统一接口，便于后续对照 Redis 或专业搜索引擎后端。
 - Web 搜索：FastAPI API + 简洁搜索网页。
@@ -18,7 +20,8 @@
 - 搜索评测：使用 `tests/fixtures/search_eval.json` 验证 Top1、Top3 和零结果率。
 - 二次元垂直化：已接入 `aliases`、`entity_type`、`game_title`、`character_name`、`source_score` 等字段。
 - 设计系统：`docs/design-system.md` 约束后续页面和调试界面风格。
-- 受控数据源：`sources.example.json` 提供抓取源配置样例。
+- 别名词典：`aliases.example.json` 记录角色、作品和资讯意图词的维护样例。
+- 受控数据源：`sources.example.json` 提供本地 fixture 和 3 个真实公开站点抓取源配置。
 
 ## 安装
 
@@ -55,6 +58,8 @@ uvicorn erfairy.web:app --reload
 - `docs/learning-roadmap.md`：按代码模块安排学习顺序，适合边读边运行。
 - `docs/office-hours-design.md`：记录项目定位、阶段路线、架构决策、测试策略和后续任务。
 - `docs/design-system.md`：记录页面视觉和组件规则。
+- `aliases.example.json`：记录阶段 4 的角色/作品别名和资讯意图词样例。
+- `sources.example.json`：记录本地 fixture 和公开站点的受控抓取配置。
 
 ## API
 
@@ -75,12 +80,24 @@ Content-Type: application/json
   "seeds": ["https://example.com/wiki/anime"],
   "max_pages": 10,
   "max_depth": 1,
-  "delay_seconds": 0.5,
-  "category": "anime"
+  "delay_seconds": 0.5
 }
 ```
 
-返回内容会包含 `saved`、`errors` 和 `total_documents`。其中 `errors` 表示本次抓取中被域名限制、robots 拒绝、下载失败或解析失败的页面数量，详细记录会写入 SQLite。
+`category` 可以省略，默认使用自动分类。解析器会根据 URL、标题、摘要、标签和 `entity_type` 推断 `news`、`character` 或 `anime`。如果你已经确定分类，也可以手动传入 `"category": "news"`、`"category": "anime"` 或 `"category": "character"` 覆盖自动判断。
+
+按 `sources.example.json` 中的数据源名称抓取：
+
+```http
+POST /crawl
+Content-Type: application/json
+
+{
+  "source_name": "MyAnimeList 动漫新闻"
+}
+```
+
+返回内容会包含 `run_id`、`saved`、`errors`、`error_details` 和 `total_documents`。其中 `errors` 表示本次抓取中被域名限制、robots 拒绝、下载失败或解析失败的页面数量，详细记录会写入 SQLite。
 
 重建索引：
 
@@ -121,16 +138,17 @@ GET /debug/index
 ## 测试
 
 ```powershell
-pytest
+python -m pytest
 ```
 
 搜索质量评测：
 
 ```powershell
-pytest tests/test_search_eval.py
+python -m pytest tests/test_search_eval.py
 ```
 
 当前测试覆盖普通搜索 JSON、浏览器结果页、调试搜索、索引状态、分词、排序、SearchIndex 接口、SQLite upsert、HTML 解析和开发写入接口开关。
+阶段 5 额外覆盖本地 HTML fixture 抓取、公开站点配置加载、抓取错误记录、meta 垂直字段解析、content hash 去重和标题相似度去重。
 
 ## 学习路线
 
@@ -139,6 +157,7 @@ pytest tests/test_search_eval.py
 下一步可以继续扩展：
 
 - 先把阶段 4 的新字段和二次元垂直化逻辑学透。
-- 再继续完善别名词典、站点适配器和来源评分规则。
+- 继续把 `aliases.example.json` 接成可加载词典，并完善来源评分规则。
+- 后续可以为每个公开站点补专用 parser，提高非 article 页面抽取质量。
 - 然后补 `/debug/search` 的 HTML 学习页面。
 - 最后再把默认内存索引替换为 Redis 倒排索引，并和当前实现做对照。

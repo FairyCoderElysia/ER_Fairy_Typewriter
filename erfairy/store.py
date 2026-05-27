@@ -7,10 +7,14 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Iterable
 
 from .models import CrawlError, SearchDocument
+
+
+TITLE_SIMILARITY_THRESHOLD = 0.92
 
 
 class SQLiteDocumentStore:
@@ -42,6 +46,7 @@ class SQLiteDocumentStore:
                     game_title TEXT NOT NULL DEFAULT '',
                     character_name TEXT NOT NULL DEFAULT '',
                     source_score REAL NOT NULL DEFAULT 0.0,
+                    content_hash TEXT NOT NULL DEFAULT '',
                     category TEXT NOT NULL DEFAULT 'anime',
                     source TEXT NOT NULL DEFAULT '',
                     published_at TEXT NOT NULL DEFAULT '',
@@ -50,8 +55,9 @@ class SQLiteDocumentStore:
                 )
                 """
             )
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_documents_category ON documents(category)")
             self._ensure_document_columns(conn)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_documents_category ON documents(category)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_documents_content_hash ON documents(content_hash)")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS crawl_runs (
@@ -91,6 +97,7 @@ class SQLiteDocumentStore:
             "game_title": "TEXT NOT NULL DEFAULT ''",
             "character_name": "TEXT NOT NULL DEFAULT ''",
             "source_score": "REAL NOT NULL DEFAULT 0.0",
+            "content_hash": "TEXT NOT NULL DEFAULT ''",
         }
         for name, ddl in column_defs.items():
             if name not in columns:
@@ -100,14 +107,16 @@ class SQLiteDocumentStore:
         tags_json = json.dumps(document.tags, ensure_ascii=False)
         aliases_json = json.dumps(document.aliases, ensure_ascii=False)
         with self.connect() as conn:
+            existing = self._find_existing_document(conn, document)
+            upsert_url = existing["url"] if existing else document.url
             conn.execute(
                 """
                 INSERT INTO documents (
                     url, title, content, summary, tags, aliases, entity_type,
-                    game_title, character_name, source_score, category, source,
+                    game_title, character_name, source_score, content_hash, category, source,
                     published_at, crawled_at, image_url
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(url) DO UPDATE SET
                     title=excluded.title,
                     content=excluded.content,
@@ -118,6 +127,7 @@ class SQLiteDocumentStore:
                     game_title=excluded.game_title,
                     character_name=excluded.character_name,
                     source_score=excluded.source_score,
+                    content_hash=excluded.content_hash,
                     category=excluded.category,
                     source=excluded.source,
                     published_at=excluded.published_at,
@@ -125,7 +135,7 @@ class SQLiteDocumentStore:
                     image_url=excluded.image_url
                 """,
                 (
-                    document.url,
+                    upsert_url,
                     document.title,
                     document.content,
                     document.summary,
@@ -135,6 +145,7 @@ class SQLiteDocumentStore:
                     document.game_title,
                     document.character_name,
                     document.source_score,
+                    document.content_hash,
                     document.category,
                     document.source,
                     document.published_at,
@@ -142,9 +153,44 @@ class SQLiteDocumentStore:
                     document.image_url,
                 ),
             )
-            row = conn.execute("SELECT id FROM documents WHERE url = ?", (document.url,)).fetchone()
+            row = conn.execute("SELECT id, url FROM documents WHERE url = ?", (upsert_url,)).fetchone()
         document.id = int(row["id"])
+        document.url = row["url"]
         return document
+
+    def _find_existing_document(self, conn: sqlite3.Connection, document: SearchDocument) -> sqlite3.Row | None:
+        if document.content_hash:
+            existing = conn.execute(
+                "SELECT id, url, title FROM documents WHERE content_hash = ? ORDER BY id LIMIT 1",
+                (document.content_hash,),
+            ).fetchone()
+            if existing:
+                return existing
+
+        normalized_title = self._normalize_title(document.title)
+        if len(normalized_title) < 6:
+            return None
+
+        rows = conn.execute(
+            """
+            SELECT id, url, title
+            FROM documents
+            WHERE category = ?
+              AND (? = '' OR source = ? OR source = '')
+            ORDER BY id
+            """,
+            (document.category, document.source, document.source),
+        ).fetchall()
+        for row in rows:
+            candidate = self._normalize_title(row["title"])
+            if not candidate:
+                continue
+            if SequenceMatcher(None, normalized_title, candidate).ratio() >= TITLE_SIMILARITY_THRESHOLD:
+                return row
+        return None
+
+    def _normalize_title(self, title: str) -> str:
+        return "".join(ch.lower() for ch in title if ch.isalnum() or "\u4e00" <= ch <= "\u9fff")
 
     def bulk_upsert(self, documents: Iterable[SearchDocument]) -> list[SearchDocument]:
         return [self.upsert(document) for document in documents]
@@ -269,6 +315,7 @@ class SQLiteDocumentStore:
             game_title=row["game_title"],
             character_name=row["character_name"],
             source_score=float(row["source_score"] or 0.0),
+            content_hash=row["content_hash"],
             category=row["category"],
             source=row["source"],
             published_at=row["published_at"],

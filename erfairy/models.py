@@ -48,7 +48,31 @@ def utc_now_iso() -> str:
 
 @dataclass(slots=True)  # slots=True 减少对象内存开销；文档多起来后比普通对象更省。
 class SearchDocument:
-    """??????????????????"""
+    """搜索引擎中的一篇结构化文档。
+
+    字段说明：
+        url: 文档来源地址，用于去重和跳转原文。
+        title: 标题，通常比正文更能代表主题，因此索引权重较高。
+        content: 正文内容，是搜索召回的主要文本来源。
+        summary: 摘要，用于搜索结果展示和轻量命中。
+        tags: 标签列表，用于表达作品名、角色名、题材等主题词。
+        aliases: 别名列表，用于支持简称、外文名、玩家常用称呼等查询。
+        entity_type: 实体类型，例如 character、work、news。
+        game_title: 所属游戏或作品名，帮助角色和作品建立关联。
+        character_name: 角色正式名，适合做角色搜索的精确命中加权。
+        source_score: 来源质量分，目前作为排序中的轻微加分。
+        content_hash: 正文内容指纹，用于发现同内容不同 URL 的重复文档。
+        category: 内容分类，首版默认 anime，也可以扩展 game、character、news。
+        source: 来源站点或数据来源名称。
+        published_at: 发布时间，后续可用于新鲜度排序。
+        crawled_at: 抓取或写入时间，默认使用当前 UTC 时间。
+        image_url: 结果展示图片。
+        id: SQLite 入库后的主键，索引阶段需要用它作为 doc_id。
+
+    设计思路：
+        用一个 dataclass 统一承载爬虫、存储、索引、搜索和 API 之间传递的数据，
+        比在不同模块里传散乱 dict 更容易维护字段含义，也更适合新手复盘数据流。
+    """
 
     url: str
     title: str
@@ -60,6 +84,7 @@ class SearchDocument:
     game_title: str = ""
     character_name: str = ""
     source_score: float = 0.0
+    content_hash: str = ""
     category: str = "anime"
     source: str = ""
     published_at: str = ""
@@ -68,7 +93,16 @@ class SearchDocument:
     id: int | None = None
 
     def as_dict(self) -> dict[str, Any]:
-        """????????????"""
+        """把文档对象转换成 API/模板容易使用的字典。
+
+        使用场景：
+            FastAPI 返回 JSON、Jinja2 模板渲染结果页、调试接口展示文档详情时，
+            都需要把 Python 对象转换成普通 dict。
+
+        设计思路：
+            字段映射集中放在这里，后续新增字段时只需要维护一个出口，
+            避免多个接口各自拼装 dict 导致遗漏或字段名不一致。
+        """
 
         return {
             "id": self.id,
@@ -82,6 +116,7 @@ class SearchDocument:
             "game_title": self.game_title,
             "character_name": self.character_name,
             "source_score": self.source_score,
+            "content_hash": self.content_hash,
             "category": self.category,
             "source": self.source,
             "published_at": self.published_at,
@@ -172,6 +207,11 @@ class DocumentScoreExplanation:
                 "title": self.document.title,
                 "summary": self.document.summary,
                 "tags": self.document.tags,
+                "aliases": self.document.aliases,
+                "entity_type": self.document.entity_type,
+                "game_title": self.document.game_title,
+                "character_name": self.document.character_name,
+                "source_score": self.document.source_score,
                 "category": self.document.category,
                 "source": self.document.source,
             },

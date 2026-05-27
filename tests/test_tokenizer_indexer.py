@@ -72,6 +72,35 @@ def test_alias_lookup_prefers_character_document():
     assert results[0][0].id == 1
 
 
+def test_stage4_alias_lookup_recalls_official_character_name():
+    docs = [
+        SearchDocument(
+            id=1,
+            url="local://raiden",
+            title="雷电将军 原神角色资料",
+            content="雷电影与永恒、稻妻和梦想一心相关。",
+            tags=["原神", "雷电将军"],
+            aliases=["雷电将军", "雷神", "影", "Raiden Shogun"],
+            entity_type="character",
+            game_title="原神",
+            character_name="雷电将军",
+        ),
+        SearchDocument(
+            id=2,
+            url="local://genshin",
+            title="原神 提瓦特开放世界",
+            content="原神里有雷神、岩神、草神等角色。",
+            tags=["原神"],
+            entity_type="work",
+            game_title="原神",
+        ),
+    ]
+    index = InMemoryTfIdfIndex()
+    index.rebuild(docs)
+    results, _ = index.search("雷神")
+    assert results[0][0].character_name == "雷电将军"
+
+
 def test_exact_title_match_gets_boost():
     docs = [
         SearchDocument(
@@ -98,6 +127,142 @@ def test_exact_title_match_gets_boost():
     index = InMemoryTfIdfIndex()
     index.rebuild(docs)
     results, _ = index.search("原神")
+    assert results[0][0].id == 1
+
+
+def test_stage4_game_name_prefers_work_over_character():
+    docs = [
+        SearchDocument(
+            id=1,
+            url="local://genshin",
+            title="原神 提瓦特开放世界",
+            content="开放世界游戏总览。",
+            tags=["原神"],
+            aliases=["Genshin"],
+            entity_type="work",
+            game_title="原神",
+        ),
+        SearchDocument(
+            id=2,
+            url="local://raiden",
+            title="雷电将军 原神角色资料",
+            content="原神角色资料。",
+            tags=["原神", "雷电将军"],
+            entity_type="character",
+            game_title="原神",
+            character_name="雷电将军",
+        ),
+    ]
+    index = InMemoryTfIdfIndex()
+    index.rebuild(docs)
+    results, _ = index.search("原神")
+    assert results[0][0].entity_type == "work"
+
+
+def test_stage4_character_exact_match_beats_title_tag_and_content_mentions():
+    docs = [
+        SearchDocument(
+            id=1,
+            url="local://character",
+            title="稻妻角色资料",
+            content="雷电将军是原神角色。",
+            tags=["原神"],
+            aliases=["雷神", "影"],
+            entity_type="character",
+            game_title="原神",
+            character_name="雷电将军",
+        ),
+        SearchDocument(
+            id=2,
+            url="local://title",
+            title="雷电将军 活动新闻",
+            content="活动资讯。",
+            tags=["原神"],
+            entity_type="news",
+            game_title="原神",
+        ),
+        SearchDocument(
+            id=3,
+            url="local://tag",
+            title="稻妻攻略",
+            content="角色培养素材。",
+            tags=["雷电将军"],
+            entity_type="news",
+            game_title="原神",
+        ),
+        SearchDocument(
+            id=4,
+            url="local://content",
+            title="原神杂谈",
+            content="这一段正文提到了雷电将军。",
+            tags=["原神"],
+            entity_type="news",
+            game_title="原神",
+        ),
+    ]
+    index = InMemoryTfIdfIndex()
+    index.rebuild(docs)
+    results, _ = index.search("雷电将军")
+    assert [document.id for document, _score in results] == [1, 2, 3, 4]
+
+
+def test_stage4_news_intent_prefers_news_document():
+    docs = [
+        SearchDocument(
+            id=1,
+            url="local://genshin",
+            title="原神 提瓦特开放世界",
+            content="原神包含角色、版本和活动。",
+            tags=["原神", "游戏"],
+            entity_type="work",
+            game_title="原神",
+            source_score=1.0,
+        ),
+        SearchDocument(
+            id=2,
+            url="local://news",
+            title="原神 最新版本活动资讯",
+            content="最新活动、版本更新和公告汇总。",
+            tags=["原神", "资讯", "最新活动"],
+            entity_type="news",
+            game_title="原神",
+            source_score=0.6,
+        ),
+    ]
+    index = InMemoryTfIdfIndex()
+    index.rebuild(docs)
+    results, _ = index.search("原神 最新活动")
+    assert results[0][0].entity_type == "news"
+
+
+def test_stage4_source_score_is_only_a_light_bonus():
+    docs = [
+        SearchDocument(
+            id=1,
+            url="local://exact",
+            title="阿米娅 明日方舟角色资料",
+            content="阿米娅是罗德岛的公开领袖。",
+            tags=["明日方舟"],
+            aliases=["Amiya"],
+            entity_type="character",
+            game_title="明日方舟",
+            character_name="阿米娅",
+            source_score=0.1,
+        ),
+        SearchDocument(
+            id=2,
+            url="local://source",
+            title="明日方舟 高质量来源整理",
+            content="这篇资料在正文中提到阿米娅。",
+            tags=["明日方舟"],
+            entity_type="news",
+            game_title="明日方舟",
+            source_score=10.0,
+        ),
+    ]
+    index = InMemoryTfIdfIndex()
+    index.rebuild(docs)
+    results, _ = index.search("阿米娅")
     assert results[0][0].id == 1
 
 
@@ -172,3 +337,55 @@ def test_sqlite_store_upserts_by_url(tmp_path):
     assert first.id == second.id
     assert store.count() == 1
     assert store.get(second.id).title == "新标题"
+
+
+def test_sqlite_store_deduplicates_by_content_hash(tmp_path):
+    store = SQLiteDocumentStore(tmp_path / "test.sqlite3")
+    first = store.upsert(
+        SearchDocument(
+            url="local://canonical",
+            title="雷电将军资料",
+            content="同一篇正文",
+            content_hash="same-content",
+        )
+    )
+    second = store.upsert(
+        SearchDocument(
+            url="local://copy",
+            title="雷电将军资料副本",
+            content="同一篇正文",
+            content_hash="same-content",
+        )
+    )
+
+    assert first.id == second.id
+    assert second.url == "local://canonical"
+    assert store.count() == 1
+    assert store.get(second.id).title == "雷电将军资料副本"
+
+
+def test_sqlite_store_deduplicates_by_similar_title(tmp_path):
+    store = SQLiteDocumentStore(tmp_path / "test.sqlite3")
+    first = store.upsert(
+        SearchDocument(
+            url="local://raiden-a",
+            title="雷电将军 原神角色资料",
+            content="第一版正文",
+            category="anime",
+            source="fixture",
+        )
+    )
+    second = store.upsert(
+        SearchDocument(
+            url="local://raiden-b",
+            title="雷电将军原神角色资料",
+            content="第二版正文，有轻微更新。",
+            category="anime",
+            source="fixture",
+        )
+    )
+
+    assert first.id == second.id
+    assert second.url == "local://raiden-a"
+    assert store.count() == 1
+    assert store.get(second.id).content == "第二版正文，有轻微更新。"

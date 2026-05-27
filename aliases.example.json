@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "description": "阶段 4 二次元垂直化别名与领域词示例。当前样例数据已在 SearchDocument.aliases 中内嵌这些词；后续真实抓取可从这里加载或校验。",
+  "entities": [
+    {
+      "canonical": "雷电将军",
+      "entity_type": "character",
+      "game_title": "原神",
+      "aliases": ["雷神", "影", "雷电影", "Raiden Shogun"]
+    },
+    {
+      "canonical": "爱莉希雅",
+      "entity_type": "character",
+      "game_title": "崩坏3",
+      "aliases": ["爱莉", "Elysia", "粉色妖精小姐"]
+    },
+    {
+      "canonical": "纳西妲",
+      "entity_type": "character",
+      "game_title": "原神",
+      "aliases": ["小草神", "草神", "Nahida", "布耶尔"]
+    },
+    {
+      "canonical": "崩坏：星穹铁道",
+      "entity_type": "work",
+      "game_title": "崩坏：星穹铁道",
+      "aliases": ["星穹铁道", "崩铁", "Honkai Star Rail"]
+    },
+    {
+      "canonical": "明日方舟",
+      "entity_type": "work",
+      "game_title": "明日方舟",
+      "aliases": ["方舟", "Arknights"]
+    }
+  ],
+  "news_intent_terms": ["最新", "活动", "版本", "公告", "新闻", "资讯", "更新", "前瞻"]
+}

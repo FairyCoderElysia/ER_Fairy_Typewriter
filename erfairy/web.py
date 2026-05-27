@@ -29,7 +29,7 @@ from pathlib import Path  # 处理项目路径。
 from urllib.parse import urlencode  # 安全拼接查询字符串。
 from urllib.parse import urlparse  # 从种子 URL 中提取域名。
 
-from fastapi import FastAPI, Form, Query, Request  # FastAPI 核心对象和请求参数工具。
+from fastapi import FastAPI, Form, HTTPException, Query, Request  # FastAPI 核心对象和请求参数工具。
 from fastapi.responses import HTMLResponse, RedirectResponse  # HTML 响应和表单跳转响应。
 from fastapi.staticfiles import StaticFiles  # 挂载 CSS 等静态文件。
 from fastapi.templating import Jinja2Templates  # 渲染 HTML 模板。
@@ -39,6 +39,7 @@ from .crawler import CrawlConfig, SmallCrawler  # 爬虫配置和爬虫实现。
 from .indexer import InMemoryTfIdfIndex, SearchIndex  # 内存搜索索引和接口。
 from .sample_data import SAMPLE_DOCUMENTS  # 内置样例资料。
 from .search import SearchService  # 搜索服务层。
+from .sources import find_source_config  # 读取 sources.example.json 中的受控数据源。
 from .store import SQLiteDocumentStore  # SQLite 文档存储。
 
 
@@ -80,16 +81,18 @@ class CrawlRequest(BaseModel):
         max_depth: 链接扩展深度。
         delay_seconds: 请求间隔。
         category: 写入文档分类。
+        source_name: 可选，填写 sources.example.json 中的名称时按该数据源配置抓取。
 
     设计思路：
         用 Pydantic 做边界校验，比在函数里手写 if 更集中、更清楚。
     """
 
-    seeds: list[str] = Field(min_length=1)  # 至少提供一个种子 URL。
+    seeds: list[str] = Field(default_factory=list)  # 提供 source_name 时可以不填；否则至少提供一个种子 URL。
     max_pages: int = Field(default=10, ge=1, le=100)  # 限制 1~100 页，避免误抓太多。
     max_depth: int = Field(default=1, ge=0, le=3)  # 限制深度 0~3，防止爬虫扩散。
     delay_seconds: float = Field(default=0.5, ge=0.0, le=10.0)  # 限制请求间隔范围。
-    category: str = "anime"  # 默认分类。
+    category: str = "auto"  # 默认自动分类；手动传 anime/news/character 时优先使用手动值。
+    source_name: str = ""  # 可选：使用 sources.example.json 中的配置。
 
 
 @app.get("/", response_class=HTMLResponse)  # GET 首页，返回 HTML。
@@ -163,31 +166,51 @@ def crawl(request: CrawlRequest):
     if not DEV_MUTATION_ENABLED:  # 生产环境可通过环境变量关闭抓取和重建接口。
         return {"detail": "开发写入接口已关闭，请设置 ERFAIRY_DEV_MUTATIONS=1 后再使用"}  # 明确提示。
 
-    allowed_domains = {urlparse(seed).netloc for seed in request.seeds}  # 默认只允许抓种子域名。
+    crawl_config = _crawl_config_from_request(request)  # 合并请求体和可选数据源配置。
     crawler = SmallCrawler()  # 创建爬虫实例。
-    result = crawler.crawl(  # 执行爬取。
-        CrawlConfig(  # 把请求体转换成爬虫配置。
-            seeds=request.seeds,  # 种子 URL。
-            max_pages=request.max_pages,  # 页数上限。
-            max_depth=request.max_depth,  # 深度上限。
-            delay_seconds=request.delay_seconds,  # 请求间隔。
-            allowed_domains=allowed_domains,  # 域名白名单。
-            category=request.category,  # 文档分类。
-        )
-    )
-    run_id = store.start_crawl_run(category=request.category)  # 记录这次抓取运行。
+    result = crawler.crawl(crawl_config)  # 执行爬取。
+    run_id = store.start_crawl_run(category=crawl_config.category)  # 记录这次抓取运行。
     saved = store.bulk_upsert(result.documents)  # 保存抓取文档。
     store.save_crawl_errors(run_id, result.errors)  # 保存抓取失败记录。
     store.finish_crawl_run(  # 更新运行结束状态。
         run_id,
-        source_count=len(request.seeds),
+        source_count=len(crawl_config.seeds),
         saved_count=len(saved),
         error_count=len(result.errors),
-        category=request.category,
+        category=crawl_config.category,
         status="completed",
     )
     index.rebuild(store.all())  # 数据变化后重建索引，保证立即可搜。
-    return {"saved": len(saved), "errors": len(result.errors), "total_documents": store.count()}  # 返回本次保存数、错误数和总文档数。
+    return {
+        "run_id": run_id,
+        "saved": len(saved),
+        "errors": len(result.errors),
+        "error_details": [error.as_dict() for error in result.errors],
+        "total_documents": store.count(),
+    }  # 返回本次运行、保存数、错误数、错误明细和总文档数。
+
+
+def _crawl_config_from_request(request: CrawlRequest) -> CrawlConfig:
+    """从请求体构造爬虫配置，可选按 sources.example.json 覆盖。"""
+
+    if request.source_name:
+        source = find_source_config(request.source_name)
+        if source:
+            return source.to_crawl_config()
+        raise HTTPException(status_code=404, detail=f"未找到数据源配置：{request.source_name}")
+
+    if not request.seeds:
+        raise HTTPException(status_code=422, detail="请提供 seeds，或提供 sources.example.json 中的 source_name")
+
+    allowed_domains = {urlparse(seed).netloc for seed in request.seeds}  # 默认只允许抓种子域名。
+    return CrawlConfig(
+        seeds=request.seeds,
+        max_pages=request.max_pages,
+        max_depth=request.max_depth,
+        delay_seconds=request.delay_seconds,
+        allowed_domains=allowed_domains,
+        category=request.category,
+    )
 
 
 @app.post("/reindex")  # 开发接口：重建索引。

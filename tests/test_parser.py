@@ -41,3 +41,80 @@ def test_parser_extracts_document_and_links():
     assert document.summary == "角色简介"  # 应读取 meta description。
     assert "动漫" in document.tags  # 应从 meta keywords 中提取标签。
     assert "https://example.com/next" in links  # 相对链接应被 urljoin 转成绝对链接。
+
+
+def test_parser_extracts_stage5_vertical_meta_and_content_hash():
+    """验证本地 fixture/站点适配器可以通过 meta 写入垂直字段。"""
+
+    html = """
+    <html>
+      <head>
+        <meta name="erfairy:aliases" content="雷神,影,Raiden Shogun">
+        <meta name="erfairy:entity_type" content="character">
+        <meta name="erfairy:game_title" content="原神">
+        <meta name="erfairy:character_name" content="雷电将军">
+        <meta name="erfairy:source_score" content="0.88">
+      </head>
+      <body>
+        <article><h1>雷电将军</h1><p>雷电将军是稻妻角色。</p></article>
+      </body>
+    </html>
+    """
+
+    document, _links = AnimePageParser().parse(html, "https://example.com/raiden")
+
+    assert document.aliases == ["雷神", "影", "Raiden Shogun"]
+    assert document.entity_type == "character"
+    assert document.game_title == "原神"
+    assert document.character_name == "雷电将军"
+    assert document.source_score == 0.88
+    assert document.content_hash
+
+
+def test_parser_auto_detects_news_category():
+    html = """
+    <html>
+      <head>
+        <title>Anime News</title>
+        <meta name="description" content="Latest anime news and event updates">
+      </head>
+      <body>
+        <main><p>News and update list.</p></main>
+      </body>
+    </html>
+    """
+
+    document, _links = AnimePageParser().parse(html, "https://example.com/news", category="auto")
+
+    assert document.category == "news"
+
+
+def test_parser_auto_detects_character_category_from_meta():
+    html = """
+    <html>
+      <head>
+        <title>雷电将军资料</title>
+        <meta name="erfairy:entity_type" content="character">
+      </head>
+      <body>
+        <article><p>角色资料。</p></article>
+      </body>
+    </html>
+    """
+
+    document, _links = AnimePageParser().parse(html, "https://example.com/raiden", category="auto")
+
+    assert document.category == "character"
+
+
+def test_parser_manual_category_overrides_auto_detection():
+    html = """
+    <html>
+      <head><title>Anime News</title></head>
+      <body><main><p>Latest anime news.</p></main></body>
+    </html>
+    """
+
+    document, _links = AnimePageParser().parse(html, "https://example.com/news", category="anime")
+
+    assert document.category == "anime"

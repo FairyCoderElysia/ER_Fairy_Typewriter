@@ -2,7 +2,7 @@
 
 这份文档用于配合代码学习搜索引擎全流程。建议不要一开始就追求复杂功能，而是按模块理解“数据如何进入系统，又如何被搜索出来”。
 
-当前进度：阶段 4 已完成。现在重点不再是“能不能搜”，而是“为什么这样排、为什么这样存、为什么这样更像真实二次元搜索产品”。
+当前进度：阶段 5 已完成。现在项目已经具备“fixture/公开站点 -> 爬虫 -> 解析 -> 去重存储 -> 索引 -> 搜索 -> 调试解释 -> 评测”的完整闭环。学习重点不再是“能不能搜”，而是“数据如何受控进入系统、为什么这样排、为什么这样存、为什么这样更像真实搜索产品”。
 
 ## 1. 先跑通项目
 目标：确认本地环境能启动、能搜索、能运行测试。
@@ -28,7 +28,7 @@ uvicorn erfairy.web:app --reload
 重点问题：
 
 - `SearchDocument` 为什么要包含 title、content、summary、tags？
-- 为什么 SQLite 用 URL 去重？
+- 为什么 SQLite 先用 URL 去重，再用 `content_hash` 和标题相似度合并重复页面？
 - `crawl_runs` 和 `crawl_errors` 分别记录什么？为什么失败记录也值得持久化？
 - 为什么存储层和索引层要分开？
 - `aliases`、`entity_type`、`game_title`、`character_name`、`source_score` 各自负责什么？
@@ -67,7 +67,11 @@ uvicorn erfairy.web:app --reload
 
 1. `erfairy/crawler.py`
 2. `erfairy/parser.py`
-3. `tests/test_parser.py`
+3. `erfairy/sources.py`
+4. `sources.example.json`
+5. `tests/test_crawler.py`
+6. `tests/test_parser.py`
+7. `tests/test_sources.py`
 
 重点问题：
 
@@ -75,6 +79,29 @@ uvicorn erfairy.web:app --reload
 - 为什么要删除 `script`、`style`、`noscript`、`svg`？
 - `urljoin()` 如何把相对链接转成绝对链接？
 - `CrawlResult.documents` 和 `CrawlResult.errors` 为什么要分开返回？
+- `source_name` 如何从 `sources.example.json` 转换成 `CrawlConfig`？
+- `category=auto` 如何根据 URL、标题、摘要、标签和 `entity_type` 推断 `news`、`character` 或 `anime`？
+- 为什么公开站点默认使用 `max_depth=0` 和较小的 `max_pages`？
+
+本地 fixture 抓取示例：
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8000/crawl" `
+  -ContentType "application/json" `
+  -Body '{"seeds":["file:///F:/search_Engine/tests/fixtures/crawl_site/index.html"],"max_pages":10,"max_depth":1,"delay_seconds":0}'
+```
+
+公开站点配置抓取示例：
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8000/crawl" `
+  -ContentType "application/json" `
+  -Body '{"source_name":"MyAnimeList 动漫新闻"}'
+```
 
 ## 6. 学习调试搜索
 阶段二已经新增 `/debug/search`，建议这样学习：
@@ -92,13 +119,16 @@ GET /debug/search?q=原神&category=anime
 - `boost_score`：完整命中带来的业务加分。
 - `final_score`：最终排序分数。
 
-阶段 4 之后建议额外观察：
+阶段 4/5 之后建议额外观察：
 
 - `aliases`：是否帮助中英混合别名召回。
 - `entity_type`：是否帮助区分角色页、作品页、资讯页。
 - `game_title`：是否帮助角色和作品关联更稳定。
 - `character_name`：是否让角色名精确命中更靠前。
 - `source_score`：是否只做轻微来源加分，而没有盖过相关性。
+- `content_hash`：是否帮助同正文不同 URL 的页面合并。
+- 标题相似度：是否帮助标题几乎相同的重复页面合并。
+- 自动分类：公开新闻页是否进入 `news`，角色资料页是否进入 `character`。
 
 再访问：
 
@@ -113,11 +143,17 @@ GET /debug/index
 - `posting_count`：倒排索引里的 term-doc 关系数量。
 - `last_rebuilt_at`：最近一次重建索引的时间。
 
+注意：`/search` 默认仍按分类过滤。抓取新闻源后，如果文档被自动归为 `news`，搜索时需要使用：
+
+```http
+GET /search?q=Anime&category=news
+```
+
 ## 7. 用评测集学习调参
 当你修改分词、字段权重、boost 或别名词典时，先运行测试：
 
 ```powershell
-pytest tests/test_search_eval.py
+python -m pytest tests/test_search_eval.py
 ```
 
 观察：
@@ -153,13 +189,17 @@ POST /reindex
 - 为什么环境变量适合做本地教学项目的第一版开关？
 - 如果未来部署到公网，除了环境变量，还可以增加哪些保护？
 - 为什么 `source_score` 应该是来源质量的轻微加分，而不是主排序因素？
+- 为什么 `category` 支持自动判断，但仍允许手动覆盖？
 
 ## 9. 理解回归测试
 这轮新增了 API 和页面级测试，建议阅读：
 
 1. `tests/test_api.py`
 2. `tests/test_search_eval.py`
-3. `tests/fixtures/search_eval.json`
+3. `tests/test_crawler.py`
+4. `tests/test_parser.py`
+5. `tests/test_sources.py`
+6. `tests/fixtures/search_eval.json`
 
 重点问题：
 
@@ -168,12 +208,14 @@ POST /reindex
 - 搜索评测为什么允许 Top1 不是 100%，但要求 Top3 和零结果率更稳定？
 - 为什么要测试 `InMemoryTfIdfIndex` 是 `SearchIndex` 的实现？
 - 为什么要测试关闭 `ERFAIRY_DEV_MUTATIONS` 后 `/crawl` 和 `/reindex` 不再执行写操作？
+- 为什么要测试本地 fixture 抓取、公开源配置加载、自动分类和标题相似度去重？
 
-## 10. 阶段 4 之后怎么继续学
+## 10. 阶段 5 之后怎么继续学
 
-阶段 4 已经把二次元垂直化的核心字段加进来了，下一步建议按这个顺序继续：
+阶段 5 已经把二次元垂直化和可控数据采集闭环打通了，下一步建议按这个顺序继续：
 
 1. 先看 `aliases`、`entity_type`、`game_title`、`character_name`、`source_score` 在 `erfairy/models.py` 和 `erfairy/indexer.py` 里的流动。
-2. 再用 `/debug/search` 对照每个字段的分数贡献。
-3. 再用 `tests/test_search_eval.py` 看调权重后哪条查询变好、哪条查询变差。
-4. 最后再去补来源评分规则、别名词典和更多数据源。
+2. 再看 `content_hash`、canonical URL 和标题相似度在 `erfairy/parser.py` 与 `erfairy/store.py` 里的去重链路。
+3. 再用 `/debug/search` 对照每个字段的分数贡献。
+4. 再用 `tests/test_search_eval.py` 看调权重后哪条查询变好、哪条查询变差。
+5. 最后再去补可加载别名词典、站点专用 parser、来源评分规则和索引后端对照。

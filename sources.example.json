@@ -11,25 +11,36 @@
     "notes": "用于本地 fixture 或静态 HTML 页面测试"
   },
   {
-    "name": "二游资讯站",
-    "entry_url": "https://example.com/wiki/games",
-    "allowed_domains": ["example.com"],
+    "name": "MyAnimeList 动漫新闻",
+    "entry_url": "https://myanimelist.net/news",
+    "allowed_domains": ["myanimelist.net"],
     "category": "news",
-    "max_pages": 10,
-    "max_depth": 1,
+    "max_pages": 1,
+    "max_depth": 0,
     "delay_seconds": 1.0,
     "parse_strategy": "article-first",
-    "notes": "先用小规模公开页面或本地镜像验证解析规则"
+    "notes": "真实公开站点，小规模抓取动漫新闻入口；抓取前会检查 robots.txt"
   },
   {
-    "name": "角色资料站",
-    "entry_url": "https://example.com/wiki/characters",
-    "allowed_domains": ["example.com"],
-    "category": "character",
-    "max_pages": 10,
-    "max_depth": 1,
+    "name": "Anime News Network 首页",
+    "entry_url": "https://www.animenewsnetwork.com/",
+    "allowed_domains": ["www.animenewsnetwork.com"],
+    "category": "news",
+    "max_pages": 1,
+    "max_depth": 0,
     "delay_seconds": 1.0,
-    "parse_strategy": "meta-first",
-    "notes": "适合验证别名、标题命中和角色卡片解析"
+    "parse_strategy": "article-first",
+    "notes": "真实公开站点，小规模抓取动漫新闻入口；抓取前会检查 robots.txt"
+  },
+  {
+    "name": "Fate Grand Order 官方新闻",
+    "entry_url": "https://fate-go.us/news/",
+    "allowed_domains": ["fate-go.us"],
+    "category": "anime",
+    "max_pages": 1,
+    "max_depth": 0,
+    "delay_seconds": 1.0,
+    "parse_strategy": "article-first",
+    "notes": "真实公开站点，小规模抓取 FGO 官方新闻入口；抓取前会检查 robots.txt"
   }
 ]

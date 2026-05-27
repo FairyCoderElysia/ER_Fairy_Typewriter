@@ -23,6 +23,7 @@
 
 from __future__ import annotations  # 推迟类型注解解析。
 
+import hashlib  # 用正文生成内容指纹，帮助同内容不同 URL 去重。
 import re  # 用于合并多余空白。
 from urllib.parse import urljoin, urlparse  # urljoin 补全相对链接，urlparse 拆分域名/路径。
 
@@ -32,6 +33,24 @@ from .models import SearchDocument, utc_now_iso  # 文档模型和当前 UTC 时
 
 
 SPACE_RE = re.compile(r"\s+")  # 匹配连续空白：换行、Tab、多个空格等。
+
+AUTO_CATEGORY = "auto"
+NEWS_CATEGORY_TERMS = {
+    "news",
+    "announce",
+    "announcement",
+    "notice",
+    "event",
+    "update",
+    "新闻",
+    "资讯",
+    "公告",
+    "活动",
+    "更新",
+    "版本",
+}
+CHARACTER_CATEGORY_TERMS = {"character", "role", "角色", "人物", "档案", "资料"}
+ANIME_CATEGORY_TERMS = {"anime", "game", "wiki", "作品", "游戏", "动漫", "动画"}
 
 
 def clean_text(text: str) -> str:
@@ -80,6 +99,12 @@ class AnimePageParser:
         tags = self._tags(soup)  # 提取关键词/标签。
         image_url = self._image(soup, url)  # 提取代表图。
         canonical_url = self._canonical(soup, url)  # 提取 canonical URL，减少重复页面。
+        aliases = self._list_meta(soup, "erfairy:aliases")  # 站点适配器可用 meta 提供别名。
+        entity_type = self._meta(soup, "erfairy:entity_type")  # 实体类型：work/character/news。
+        game_title = self._meta(soup, "erfairy:game_title")  # 所属游戏。
+        character_name = self._meta(soup, "erfairy:character_name")  # 角色正式名。
+        source_score = self._source_score(soup)  # 来源质量轻量评分。
+        resolved_category = self._category(soup, url, title, summary, tags, entity_type, category)  # 自动或手动分类。
 
         document = SearchDocument(  # 组装标准文档模型。
             url=canonical_url,  # 使用 canonical 作为文档 URL。
@@ -87,7 +112,13 @@ class AnimePageParser:
             content=content,  # 正文。
             summary=clean_text(summary),  # 摘要也清洗空白。
             tags=tags,  # 标签。
-            category=category,  # 分类。
+            aliases=aliases,  # 别名。
+            entity_type=entity_type,  # 实体类型。
+            game_title=game_title,  # 所属作品/游戏。
+            character_name=character_name,  # 角色正式名。
+            source_score=source_score,  # 来源质量分。
+            content_hash=self._content_hash(content),  # 正文内容指纹。
+            category=resolved_category,  # 分类。
             source=urlparse(url).netloc,  # 来源域名。
             published_at=self._published_at(soup),  # 发布时间，可能为空。
             crawled_at=utc_now_iso(),  # 抓取时间。
@@ -125,6 +156,58 @@ class AnimePageParser:
         if not tag and attr == "name":  # 如果按 name 找不到，再尝试 property。
             tag = soup.find("meta", attrs={"property": name})  # 兼容 Open Graph。
         return clean_text(tag.get("content", "")) if tag else ""  # 找到返回 content，否则空字符串。
+
+    def _list_meta(self, soup: BeautifulSoup, name: str) -> list[str]:
+        """读取逗号分隔的 meta 列表字段。"""
+
+        value = self._meta(soup, name)  # 读取 meta content。
+        return [clean_text(item) for item in value.split(",") if clean_text(item)]  # 清洗并去掉空项。
+
+    def _source_score(self, soup: BeautifulSoup) -> float:
+        """读取来源质量分。"""
+
+        value = self._meta(soup, "erfairy:source_score")  # 站点适配器可写入 0~10 的来源分。
+        try:
+            return float(value) if value else 0.0
+        except ValueError:
+            return 0.0
+
+    def _category(
+        self,
+        soup: BeautifulSoup,
+        url: str,
+        title: str,
+        summary: str,
+        tags: list[str],
+        entity_type: str,
+        requested_category: str,
+    ) -> str:
+        """根据页面内容推断分类；手动传入明确分类时优先使用手动值。"""
+
+        explicit = self._meta(soup, "erfairy:category")
+        if explicit:
+            return explicit
+        if requested_category and requested_category != AUTO_CATEGORY:
+            return requested_category
+        if entity_type == "news":
+            return "news"
+        if entity_type == "character":
+            return "character"
+
+        haystack = " ".join([url, title, summary, " ".join(tags)]).lower()
+        if any(term in haystack for term in NEWS_CATEGORY_TERMS):
+            return "news"
+        if any(term in haystack for term in CHARACTER_CATEGORY_TERMS):
+            return "character"
+        if any(term in haystack for term in ANIME_CATEGORY_TERMS):
+            return "anime"
+        return "anime"
+
+    def _content_hash(self, content: str) -> str:
+        """生成正文内容 hash，用于发现同内容不同 URL 的重复文档。"""
+
+        normalized = clean_text(content).lower()
+        return hashlib.sha256(normalized.encode("utf-8")).hexdigest() if normalized else ""
 
     def _tags(self, soup: BeautifulSoup) -> list[str]:
         """提取页面标签/关键词。"""
@@ -173,6 +256,6 @@ class AnimePageParser:
         for tag in soup.find_all("a", href=True):  # 遍历所有带 href 的 a 标签。
             href = urljoin(url, tag["href"]).split("#", 1)[0]  # 相对链接转绝对链接，并去掉锚点。
             parsed = urlparse(href)  # 解析 URL。
-            if parsed.scheme in {"http", "https"} and href not in links:  # 只保留网页链接并去重。
+            if parsed.scheme in {"http", "https", "file"} and href not in links:  # 只保留网页/fixture 链接并去重。
                 links.append(href)
         return links  # 返回链接列表。

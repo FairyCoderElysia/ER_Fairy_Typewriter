@@ -26,7 +26,8 @@ from __future__ import annotations  # 推迟类型注解解析。
 import time  # 用于请求间隔 sleep，避免对目标站点造成压力。
 from collections import deque  # 双端队列，适合 BFS 爬取。
 from dataclasses import dataclass, field  # dataclass 表达爬虫配置。
-from urllib.parse import urlparse  # 解析 URL 的域名、协议。
+from pathlib import Path  # 支持 file:// 本地 HTML fixture。
+from urllib.parse import unquote, urlparse  # 解析 URL 的域名、协议。
 from urllib.robotparser import RobotFileParser  # 读取 robots.txt。
 
 import requests  # HTTP 请求库。
@@ -95,10 +96,10 @@ class SmallCrawler:
             visited.add(url)  # 标记当前 URL 已访问。
 
             parsed = urlparse(url)  # 解析协议和域名。
-            if parsed.scheme not in {"http", "https"} or parsed.netloc not in allowed_domains:  # 非网页链接或跨域链接跳过。
+            if not self._url_allowed(parsed, allowed_domains):  # 非网页链接或跨域链接跳过。
                 errors.append(CrawlError(url=url, stage="domain", message="URL 不在允许域名范围内", depth=depth, category=config.category))
                 continue
-            if not self._allowed_by_robots(url, config.user_agent):  # robots.txt 不允许时跳过。
+            if parsed.scheme != "file" and not self._allowed_by_robots(url, config.user_agent):  # robots.txt 不允许时跳过。
                 errors.append(CrawlError(url=url, stage="robots", message="robots.txt 不允许抓取", depth=depth, category=config.category))
                 continue
 
@@ -119,7 +120,7 @@ class SmallCrawler:
 
             if depth < config.max_depth:  # 未达到深度上限时才扩展链接。
                 for link in links:  # 遍历解析出的链接。
-                    if link not in visited and urlparse(link).netloc in allowed_domains:  # 未访问且域名允许。
+                    if link not in visited and self._url_allowed(urlparse(link), allowed_domains):  # 未访问且边界允许。
                         queue.append((link, depth + 1))  # 加入下一层队列。
 
             time.sleep(config.delay_seconds)  # 礼貌等待，避免请求过快。
@@ -138,13 +139,29 @@ class SmallCrawler:
         """
 
         try:  # 网络请求容易失败，必须用异常处理保护爬虫主流程。
+            parsed = urlparse(url)
+            if parsed.scheme == "file":
+                raw_path = unquote(parsed.path)
+                if len(raw_path) >= 3 and raw_path[0] == "/" and raw_path[2] == ":":
+                    raw_path = raw_path[1:]
+                path = Path(raw_path)
+                return path.read_text(encoding="utf-8")
             response = requests.get(url, headers={"User-Agent": user_agent}, timeout=10)  # 设置 UA 和超时。
             content_type = response.headers.get("content-type", "")  # 查看响应类型。
             if response.ok and "text/html" in content_type:  # 只接受成功的 HTML 页面。
                 return response.text  # requests 会根据响应头尝试解码文本。
         except requests.RequestException:  # DNS、超时、连接失败等都会进入这里。
             return ""  # MVP 中失败即跳过；真实系统可记录日志。
+        except OSError:
+            return ""
         return ""  # 非 HTML 或非 2xx 响应返回空。
+
+    def _url_allowed(self, parsed, allowed_domains: set[str]) -> bool:
+        """判断 URL 是否在本次受控采集边界内。"""
+
+        if parsed.scheme == "file":
+            return True
+        return parsed.scheme in {"http", "https"} and parsed.netloc in allowed_domains
 
     def _allowed_by_robots(self, url: str, user_agent: str) -> bool:
         """检查 robots.txt 是否允许抓取该 URL。
