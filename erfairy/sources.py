@@ -21,10 +21,12 @@ class SourceConfig:
     name: str
     entry_url: str
     allowed_domains: list[str]
+    source_id: str = ""
     category: str = "anime"
     max_pages: int = 10
     max_depth: int = 1
     delay_seconds: float = 1.0
+    source_score: float = 0.0
     parse_strategy: str = "default"
     notes: str = ""
 
@@ -33,11 +35,13 @@ class SourceConfig:
         return cls(
             name=str(data["name"]),
             entry_url=str(data["entry_url"]),
+            source_id=str(data.get("id", "")),
             allowed_domains=[str(domain) for domain in data.get("allowed_domains", [])],
             category=str(data.get("category", "anime")),
             max_pages=int(data.get("max_pages", 10)),
             max_depth=int(data.get("max_depth", 1)),
             delay_seconds=float(data.get("delay_seconds", 1.0)),
+            source_score=float(data.get("source_score", 0.0)),
             parse_strategy=str(data.get("parse_strategy", "default")),
             notes=str(data.get("notes", "")),
         )
@@ -60,7 +64,8 @@ def load_source_configs(path: str | Path = DEFAULT_SOURCES_PATH) -> list[SourceC
 
 
 def find_source_config(name: str, path: str | Path = DEFAULT_SOURCES_PATH) -> SourceConfig | None:
+    key = name.strip()
     for source in load_source_configs(path):
-        if source.name == name:
+        if source.name == key or source.source_id == key:
             return source
     return None

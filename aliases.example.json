@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "阶段 4 二次元垂直化别名与领域词示例。当前样例数据已在 SearchDocument.aliases 中内嵌这些词；后续真实抓取可从这里加载或校验。",
+  "description": "二次元垂直化别名与领域词词典。项目启动和爬虫入库前会通过 erfairy/domain_terms.py 加载这里的实体和资讯意图词。",
   "entities": [
     {
       "canonical": "雷电将军",

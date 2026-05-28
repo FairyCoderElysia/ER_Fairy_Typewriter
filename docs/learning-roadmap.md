@@ -2,7 +2,7 @@
 
 这份文档用于配合代码学习搜索引擎全流程。建议不要一开始就追求复杂功能，而是按模块理解“数据如何进入系统，又如何被搜索出来”。
 
-当前进度：阶段 5 已完成。现在项目已经具备“fixture/公开站点 -> 爬虫 -> 解析 -> 去重存储 -> 索引 -> 搜索 -> 调试解释 -> 评测”的完整闭环。学习重点不再是“能不能搜”，而是“数据如何受控进入系统、为什么这样排、为什么这样存、为什么这样更像真实搜索产品”。
+当前进度：阶段 6 已开始。现在项目已经具备“fixture/公开站点 -> 爬虫 -> 解析 -> 领域词典补全 -> 去重存储 -> 可切换索引 -> 搜索 -> 调试解释 -> 评测”的完整闭环。学习重点不再是“能不能搜”，而是“数据如何受控进入系统、为什么这样排、为什么这样存、为什么这样更像真实搜索产品”。
 
 ## 1. 先跑通项目
 目标：确认本地环境能启动、能搜索、能运行测试。
@@ -14,7 +14,7 @@ pip install -r requirements.txt
 uvicorn erfairy.web:app --reload
 ```
 
-打开 `http://127.0.0.1:8000`，搜索 `爱莉希雅`、`原神`、`芙莉莲`。
+打开 `http://127.0.0.1:8000`，搜索 `爱莉希雅`、`原神`、`芙莉莲`。搜索默认覆盖全部分类；如果想精细搜索，可以在结果页选择“动漫/游戏”“资讯”或“角色”。
 
 如果浏览器搜索页能正常显示结果，再访问 `http://127.0.0.1:8000/debug/search?q=原神&category=anime`，观察同一次搜索背后的排序解释。
 
@@ -24,6 +24,7 @@ uvicorn erfairy.web:app --reload
 1. `erfairy/models.py`
 2. `erfairy/sample_data.py`
 3. `erfairy/store.py`
+4. `erfairy/domain_terms.py`
 
 重点问题：
 
@@ -32,6 +33,7 @@ uvicorn erfairy.web:app --reload
 - `crawl_runs` 和 `crawl_errors` 分别记录什么？为什么失败记录也值得持久化？
 - 为什么存储层和索引层要分开？
 - `aliases`、`entity_type`、`game_title`、`character_name`、`source_score` 各自负责什么？
+- 为什么词典补全要返回文档副本，而不是直接修改全局样例对象？
 
 ## 3. 理解分词和索引
 阅读顺序：
@@ -47,6 +49,8 @@ uvicorn erfairy.web:app --reload
 - TF-IDF 如何降低常见词权重？
 - 为什么标题命中比正文命中更重要？
 - `SearchIndex` 接口为什么能让内存索引、Redis 索引和未来专业搜索引擎共用同一套搜索服务？
+- `RedisZSetLikeIndex` 为什么用 `term -> [(score, doc_id)]` 模拟 Redis ZSet？
+- 为什么阶段 6 先做可切换后端，再接真实 Redis 服务？
 
 ## 4. 理解搜索服务
 阅读顺序：
@@ -59,6 +63,7 @@ uvicorn erfairy.web:app --reload
 重点问题：
 
 - `/search` 如何同时支持 HTML 和 JSON？
+- 为什么 `/search` 默认用 `category=all` 搜索全部分类，而精细筛选才传 `anime/news/character`？
 - 摘要高亮为什么要先 `html.escape()`？
 - 分页里的 `offset` 是如何计算的？
 
@@ -79,7 +84,12 @@ uvicorn erfairy.web:app --reload
 - 为什么要删除 `script`、`style`、`noscript`、`svg`？
 - `urljoin()` 如何把相对链接转成绝对链接？
 - `CrawlResult.documents` 和 `CrawlResult.errors` 为什么要分开返回？
-- `source_name` 如何从 `sources.example.json` 转换成 `CrawlConfig`？
+- `source_id` / `source_name` 如何从 `sources.example.json` 转换成 `CrawlConfig`？
+- 为什么 PowerShell 调用时更推荐 ASCII 的 `source_id`，而不是中文 `source_name`？
+- `sources.example.json` 里的 `source_score` 如何补进抓取文档？
+- MyAnimeList、Anime News Network、FGO 为什么要先抽列表链接，再抓详情页？
+- 米游社这类前端应用为什么不能只解析入口 HTML，而要通过帖子流接口生成多篇文档？
+- 为什么文章流源默认 `max_pages=20`，米游社源默认 `max_pages=5`？
 - `category=auto` 如何根据 URL、标题、摘要、标签和 `entity_type` 推断 `news`、`character` 或 `anime`？
 - 为什么公开站点默认使用 `max_depth=0` 和较小的 `max_pages`？
 
@@ -100,8 +110,22 @@ Invoke-RestMethod `
   -Method Post `
   -Uri "http://127.0.0.1:8000/crawl" `
   -ContentType "application/json" `
-  -Body '{"source_name":"MyAnimeList 动漫新闻"}'
+  -Body '{"source_id":"mal-news"}'
 ```
+
+把 `source_id` 换成 `ann-home` 或 `fgo-news`，就可以分别抓 Anime News Network 和 FGO 官方新闻。它们会一次抓取多篇详情页，而不是只保存主页面。
+
+米游社官方社区帖子流抓取示例：
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8000/crawl" `
+  -ContentType "application/json" `
+  -Body '{"source_id":"miyoushe-ys"}'
+```
+
+还可以把 `source_id` 换成 `miyoushe-bh3` 或 `miyoushe-sr`。
 
 ## 6. 学习调试搜索
 阶段二已经新增 `/debug/search`，建议这样学习：
@@ -126,6 +150,7 @@ GET /debug/search?q=原神&category=anime
 - `game_title`：是否帮助角色和作品关联更稳定。
 - `character_name`：是否让角色名精确命中更靠前。
 - `source_score`：是否只做轻微来源加分，而没有盖过相关性。
+- `published_at` / `crawled_at`：新闻意图查询下是否让近期资讯更靠前。
 - `content_hash`：是否帮助同正文不同 URL 的页面合并。
 - 标题相似度：是否帮助标题几乎相同的重复页面合并。
 - 自动分类：公开新闻页是否进入 `news`，角色资料页是否进入 `character`。
@@ -142,8 +167,24 @@ GET /debug/index
 - `term_count`：当前索引里的 token 数。
 - `posting_count`：倒排索引里的 term-doc 关系数量。
 - `last_rebuilt_at`：最近一次重建索引的时间。
+- `backend`：当前索引后端，例如 `memory` 或 `redis-zset-like`。
 
-注意：`/search` 默认仍按分类过滤。抓取新闻源后，如果文档被自动归为 `news`，搜索时需要使用：
+如果想切换到 Redis ZSet 风格教学后端：
+
+```powershell
+$env:ERFAIRY_INDEX_BACKEND="redis-zset"
+uvicorn erfairy.web:app --reload
+```
+
+然后访问：
+
+```http
+GET /debug/index
+```
+
+观察 `backend` 是否变为 `redis-zset-like`。这个后端不需要外部 Redis 服务，它用于学习“Redis ZSet 倒排表长什么样，以及同一批文档能否在不同后端下保持搜索结果一致”。
+
+注意：`/search` 默认搜索全部分类。抓取新闻源后，如果只想看资讯结果，可以使用：
 
 ```http
 GET /search?q=Anime&category=news
@@ -210,12 +251,13 @@ POST /reindex
 - 为什么要测试关闭 `ERFAIRY_DEV_MUTATIONS` 后 `/crawl` 和 `/reindex` 不再执行写操作？
 - 为什么要测试本地 fixture 抓取、公开源配置加载、自动分类和标题相似度去重？
 
-## 10. 阶段 5 之后怎么继续学
+## 10. 阶段 6 怎么继续学
 
-阶段 5 已经把二次元垂直化和可控数据采集闭环打通了，下一步建议按这个顺序继续：
+阶段 5 已经把二次元垂直化和可控数据采集闭环打通，阶段 6 已经开始做索引后端对照。下一步建议按这个顺序继续：
 
 1. 先看 `aliases`、`entity_type`、`game_title`、`character_name`、`source_score` 在 `erfairy/models.py` 和 `erfairy/indexer.py` 里的流动。
 2. 再看 `content_hash`、canonical URL 和标题相似度在 `erfairy/parser.py` 与 `erfairy/store.py` 里的去重链路。
 3. 再用 `/debug/search` 对照每个字段的分数贡献。
 4. 再用 `tests/test_search_eval.py` 看调权重后哪条查询变好、哪条查询变差。
-5. 最后再去补可加载别名词典、站点专用 parser、来源评分规则和索引后端对照。
+5. 再切换 `ERFAIRY_INDEX_BACKEND=redis-zset`，对照 `memory` 和 `redis-zset-like` 的 `/debug/index`。
+6. 最后再去补抓取状态页面、真实 Redis 后端和专业搜索引擎对照。

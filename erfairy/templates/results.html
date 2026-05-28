@@ -35,12 +35,14 @@
     </form>
   </header>
   <main class="results-layout"> <!-- 结果页主体网格。 -->
-    <aside class="filters"> <!-- 侧边筛选栏，后续可扩展游戏/资讯/coser。 -->
-      <a class="active" href="/search?q={{ query }}&category=anime">动漫/角色</a> <!-- 当前分类入口。 -->
+    <aside class="filters"> <!-- 侧边筛选栏，用于在全部和精细分类之间切换。 -->
+      {% for option in category_options %}
+        <a class="{% if category == option.value %}active{% endif %}" href="/search?q={{ query }}&category={{ option.value }}">{{ option.label }}</a>
+      {% endfor %}
     </aside>
     <section class="results"> <!-- 搜索结果列表。 -->
       {% if query %} <!-- 有查询词时展示命中总数。 -->
-        <p class="meta">找到 {{ total }} 条结果</p> <!-- total 来自 SearchService.search 返回值。 -->
+        <p class="meta">找到 {{ total }} 条结果 · 范围：{% for option in category_options %}{% if category == option.value %}{{ option.label }}{% endif %}{% endfor %}</p> <!-- total 来自 SearchService.search 返回值。 -->
       {% endif %}
       {% if not query %} <!-- 空查询状态。 -->
         <p class="empty">输入关键词开始搜索。</p> <!-- 提示用户输入关键词。 -->
@@ -48,7 +50,7 @@
         {% for item in results %} <!-- 遍历每条搜索结果。 -->
           <article class="result-item"> <!-- article 表示一条独立结果。 -->
             <a class="result-title" href="{{ item.url }}">{{ item.title }}</a> <!-- 结果标题和来源链接。 -->
-            <p class="result-url">{{ item.source or item.url }} · 相关度 {{ '%.3f'|format(item.score) }}</p> <!-- 来源与分数。 -->
+            <p class="result-url">{{ item.source or item.url }} · {{ item.category }} · 相关度 {{ '%.3f'|format(item.score) }}</p> <!-- 来源、分类与分数。 -->
             <p class="snippet">{{ item.snippet | safe }}</p> <!-- 高亮摘要；safe 只用于已转义内容。 -->
             {% if item.tags %} <!-- 有标签才渲染标签区。 -->
               <div class="tags"> <!-- 标签容器。 -->

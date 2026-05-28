@@ -25,7 +25,7 @@ from __future__ import annotations  # 支持较新的类型注解写法。
 import html  # 用于 HTML 转义，防止摘要中的特殊字符破坏页面。
 import re  # 用于把命中词替换成 <mark> 高亮。
 
-from .indexer import InMemoryTfIdfIndex  # 搜索索引，负责召回与排序。
+from .indexer import SearchIndex  # 搜索索引接口，负责召回与排序。
 from .models import SearchDocument, SearchResult  # 文档和结果数据结构。
 from .tokenizer import tokenize  # 与索引保持一致的分词规则。
 
@@ -34,7 +34,7 @@ class SearchService:
     """面向 Web/API 的搜索服务。
 
     入参：
-        index: 已经构建好的 InMemoryTfIdfIndex。
+        index: 已经构建好的 SearchIndex。
 
     使用场景：
         web.py 的 /search 路由调用 SearchService，而不是直接操作 indexer。
@@ -43,7 +43,7 @@ class SearchService:
         服务层隔离“搜索业务逻辑”和“HTTP 路由逻辑”，后续换前端或换 API 时更容易。
     """
 
-    def __init__(self, index: InMemoryTfIdfIndex) -> None:
+    def __init__(self, index: SearchIndex) -> None:
         self.index = index  # 保存索引实例，后续 search() 使用它查询。
 
     def search(self, query: str, page: int = 1, per_page: int = 10, category: str | None = None) -> dict:

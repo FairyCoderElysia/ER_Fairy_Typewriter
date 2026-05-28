@@ -118,3 +118,26 @@ def test_parser_manual_category_overrides_auto_detection():
     document, _links = AnimePageParser().parse(html, "https://example.com/news", category="anime")
 
     assert document.category == "anime"
+
+
+def test_parser_enriches_miyoushe_community_shell_by_url():
+    html = """
+    <html>
+      <head>
+        <title>米游社</title>
+        <meta name="description" content="米游社是米哈游miHoYo旗下游戏玩家社区">
+        <meta name="Keywords" content="米游社,米哈游社区">
+      </head>
+      <body><div id="__nuxt"></div></body>
+    </html>
+    """
+
+    document, _links = AnimePageParser().parse(html, "https://www.miyoushe.com/sr", category="auto")
+
+    assert document.title == "崩坏：星穹铁道 米游社官方社区"
+    assert document.entity_type == "work"
+    assert document.game_title == "崩坏：星穹铁道"
+    assert "崩铁" in document.aliases
+    assert "米游社" in document.tags
+    assert document.category == "anime"
+    assert "开拓者互动" in document.summary

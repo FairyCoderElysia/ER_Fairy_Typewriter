@@ -1,46 +1,108 @@
 [
   {
+    "id": "local-anime-fixture",
     "name": "本地二次元样例站",
     "entry_url": "http://127.0.0.1:8000/",
-    "allowed_domains": ["127.0.0.1", "localhost"],
+    "allowed_domains": [
+      "127.0.0.1",
+      "localhost"
+    ],
     "category": "anime",
     "max_pages": 20,
     "max_depth": 1,
     "delay_seconds": 0.5,
+    "source_score": 0.7,
     "parse_strategy": "default",
     "notes": "用于本地 fixture 或静态 HTML 页面测试"
   },
   {
+    "id": "mal-news",
     "name": "MyAnimeList 动漫新闻",
     "entry_url": "https://myanimelist.net/news",
-    "allowed_domains": ["myanimelist.net"],
+    "allowed_domains": [
+      "myanimelist.net"
+    ],
     "category": "news",
-    "max_pages": 1,
+    "max_pages": 20,
     "max_depth": 0,
     "delay_seconds": 1.0,
-    "parse_strategy": "article-first",
-    "notes": "真实公开站点，小规模抓取动漫新闻入口；抓取前会检查 robots.txt"
+    "source_score": 0.85,
+    "parse_strategy": "article-feed",
+    "notes": "MyAnimeList 新闻列表源。先从列表页抽取多篇新闻链接，再抓详情页入库。"
   },
   {
+    "id": "ann-home",
     "name": "Anime News Network 首页",
     "entry_url": "https://www.animenewsnetwork.com/",
-    "allowed_domains": ["www.animenewsnetwork.com"],
+    "allowed_domains": [
+      "www.animenewsnetwork.com"
+    ],
     "category": "news",
-    "max_pages": 1,
+    "max_pages": 20,
     "max_depth": 0,
     "delay_seconds": 1.0,
-    "parse_strategy": "article-first",
-    "notes": "真实公开站点，小规模抓取动漫新闻入口；抓取前会检查 robots.txt"
+    "source_score": 0.9,
+    "parse_strategy": "article-feed",
+    "notes": "Anime News Network 首页文章流。先从首页抽取多篇新闻/兴趣/新闻稿链接，再抓详情页入库。"
   },
   {
+    "id": "fgo-news",
     "name": "Fate Grand Order 官方新闻",
     "entry_url": "https://fate-go.us/news/",
-    "allowed_domains": ["fate-go.us"],
-    "category": "anime",
-    "max_pages": 1,
+    "allowed_domains": [
+      "fate-go.us"
+    ],
+    "category": "news",
+    "max_pages": 20,
     "max_depth": 0,
     "delay_seconds": 1.0,
-    "parse_strategy": "article-first",
-    "notes": "真实公开站点，小规模抓取 FGO 官方新闻入口；抓取前会检查 robots.txt"
+    "source_score": 0.95,
+    "parse_strategy": "article-feed",
+    "notes": "FGO 官方新闻 iframe 列表源。先从 webview 列表抽取多篇公告链接，再抓详情页入库。"
+  },
+  {
+    "id": "miyoushe-ys",
+    "name": "原神米游社官方社区",
+    "entry_url": "https://www.miyoushe.com/ys/",
+    "allowed_domains": [
+      "www.miyoushe.com"
+    ],
+    "category": "anime",
+    "max_pages": 5,
+    "max_depth": 0,
+    "delay_seconds": 1.0,
+    "source_score": 0.95,
+    "parse_strategy": "miyoushe-feed",
+    "notes": "米哈游官方社区帖子流。通过公开帖子列表接口抓取多篇帖子，避免只保存 SPA 入口壳。"
+  },
+  {
+    "id": "miyoushe-bh3",
+    "name": "崩坏3米游社官方社区",
+    "entry_url": "https://www.miyoushe.com/bh3",
+    "allowed_domains": [
+      "www.miyoushe.com"
+    ],
+    "category": "anime",
+    "max_pages": 5,
+    "max_depth": 0,
+    "delay_seconds": 1.0,
+    "source_score": 0.95,
+    "parse_strategy": "miyoushe-feed",
+    "notes": "米哈游官方社区帖子流。通过公开帖子列表接口抓取多篇帖子，避免只保存 SPA 入口壳。"
+  },
+  {
+    "id": "miyoushe-sr",
+    "name": "崩坏星穹铁道米游社官方社区",
+    "entry_url": "https://www.miyoushe.com/sr",
+    "allowed_domains": [
+      "www.miyoushe.com"
+    ],
+    "category": "anime",
+    "max_pages": 5,
+    "max_depth": 0,
+    "delay_seconds": 1.0,
+    "source_score": 0.95,
+    "parse_strategy": "miyoushe-feed",
+    "notes": "米哈游官方社区帖子流。通过公开帖子列表接口抓取多篇帖子，避免只保存 SPA 入口壳。"
   }
 ]

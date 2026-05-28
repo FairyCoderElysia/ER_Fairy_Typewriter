@@ -51,6 +51,29 @@ NEWS_CATEGORY_TERMS = {
 }
 CHARACTER_CATEGORY_TERMS = {"character", "role", "角色", "人物", "档案", "资料"}
 ANIME_CATEGORY_TERMS = {"anime", "game", "wiki", "作品", "游戏", "动漫", "动画"}
+MIYOUSHE_PROFILES = {
+    "ys": {
+        "title": "原神 米游社官方社区",
+        "game_title": "原神",
+        "aliases": ["Genshin Impact", "提瓦特"],
+        "tags": ["原神", "米游社", "米哈游", "官方社区", "游戏资讯"],
+        "summary": "原神米游社官方社区，包含官方资讯、玩家互动、攻略和活动内容。",
+    },
+    "bh3": {
+        "title": "崩坏3 米游社官方社区",
+        "game_title": "崩坏3",
+        "aliases": ["崩坏三", "Honkai Impact 3rd"],
+        "tags": ["崩坏3", "崩坏三", "米游社", "米哈游", "官方社区"],
+        "summary": "崩坏3米游社官方社区，包含官方资讯、舰长互动、攻略和活动内容。",
+    },
+    "sr": {
+        "title": "崩坏：星穹铁道 米游社官方社区",
+        "game_title": "崩坏：星穹铁道",
+        "aliases": ["星穹铁道", "崩铁", "Honkai Star Rail"],
+        "tags": ["崩坏：星穹铁道", "星穹铁道", "崩铁", "米游社", "米哈游", "官方社区"],
+        "summary": "崩坏：星穹铁道米游社官方社区，包含官方资讯、开拓者互动、攻略和活动内容。",
+    },
+}
 
 
 def clean_text(text: str) -> str:
@@ -97,12 +120,22 @@ class AnimePageParser:
         content = clean_text(content_node.get_text(" "))  # 抽取纯文本并清洗空白。
         summary = self._meta(soup, "description") or content[:220]  # 优先用 meta description，否则取正文前 220 字。
         tags = self._tags(soup)  # 提取关键词/标签。
+        profile = self._site_profile(url)  # 对 SPA/官方社区类页面做轻量站点适配。
+        if profile:
+            title = profile["title"]
+            summary = profile["summary"]
+            tags = self._merge_unique([*profile["tags"], *tags])
+            content = clean_text(" ".join([profile["summary"], content]))
         image_url = self._image(soup, url)  # 提取代表图。
         canonical_url = self._canonical(soup, url)  # 提取 canonical URL，减少重复页面。
         aliases = self._list_meta(soup, "erfairy:aliases")  # 站点适配器可用 meta 提供别名。
         entity_type = self._meta(soup, "erfairy:entity_type")  # 实体类型：work/character/news。
         game_title = self._meta(soup, "erfairy:game_title")  # 所属游戏。
         character_name = self._meta(soup, "erfairy:character_name")  # 角色正式名。
+        if profile:
+            aliases = self._merge_unique([*aliases, *profile["aliases"]])
+            entity_type = entity_type or "work"
+            game_title = game_title or profile["game_title"]
         source_score = self._source_score(soup)  # 来源质量轻量评分。
         resolved_category = self._category(soup, url, title, summary, tags, entity_type, category)  # 自动或手动分类。
 
@@ -193,6 +226,8 @@ class AnimePageParser:
             return "news"
         if entity_type == "character":
             return "character"
+        if entity_type == "work":
+            return "anime"
 
         haystack = " ".join([url, title, summary, " ".join(tags)]).lower()
         if any(term in haystack for term in NEWS_CATEGORY_TERMS):
@@ -219,6 +254,28 @@ class AnimePageParser:
             if value and value not in tags:  # 去重后加入。
                 tags.append(value)
         return tags[:20]  # 限制最多 20 个，避免页面导航词污染。
+
+    def _site_profile(self, url: str) -> dict[str, list[str] | str] | None:
+        """识别需要轻量站点适配的官方社区入口。"""
+
+        parsed = urlparse(url)
+        if parsed.netloc != "www.miyoushe.com":
+            return None
+        first_path = parsed.path.strip("/").split("/", 1)[0]
+        return MIYOUSHE_PROFILES.get(first_path)
+
+    def _merge_unique(self, values: list[str]) -> list[str]:
+        """按顺序合并字符串列表并去重。"""
+
+        merged: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            normalized = clean_text(value)
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            merged.append(normalized)
+        return merged
 
     def _image(self, soup: BeautifulSoup, url: str) -> str:
         """提取代表图片 URL。"""

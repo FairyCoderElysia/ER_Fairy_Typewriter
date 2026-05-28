@@ -111,6 +111,30 @@ h1 { /* 首页主标题。 */
   cursor: pointer; /* 鼠标悬停时显示可点击。 */
 }
 
+.quick-filters { /* 首页快速搜索范围。 */
+  display: flex; /* 横向排列。 */
+  flex-wrap: wrap; /* 小屏幕自动换行。 */
+  justify-content: center; /* 首页居中。 */
+  gap: 8px; /* 筛选项间距。 */
+  margin-top: 16px; /* 与搜索框拉开距离。 */
+}
+
+.quick-filters a { /* 首页分类入口。 */
+  color: var(--muted); /* 默认次要色。 */
+  text-decoration: none; /* 去掉下划线。 */
+  border: 1px solid var(--line); /* 轻边框，像筛选项。 */
+  border-radius: 999px; /* 胶囊形。 */
+  padding: 7px 12px; /* 点击区域。 */
+  font-size: 13px; /* 比正文略小。 */
+  background: #fff; /* 保持轻量。 */
+}
+
+.quick-filters a:hover,
+.quick-filters a:focus { /* 可见 hover/focus。 */
+  color: var(--accent-dark); /* 品牌色提示可交互。 */
+  border-color: var(--accent); /* 边框强调。 */
+}
+
 .topbar { /* 结果页顶部栏。 */
   min-height: 78px; /* 保证顶部栏高度稳定。 */
   display: grid; /* 品牌和搜索框横向布局。 */
@@ -228,7 +252,13 @@ mark { /* 命中关键词高亮。 */
   }
 
   .filters { /* 移动端隐藏侧边筛选。 */
-    display: none; /* 首版只有一个分类，隐藏不影响功能。 */
+    display: flex; /* 移动端改成横向筛选条。 */
+    overflow-x: auto; /* 分类较多时可横向滚动。 */
+    gap: 8px; /* 筛选项间距。 */
+  }
+
+  .filters a { /* 移动端筛选项不换行。 */
+    flex: 0 0 auto; /* 保持每个入口独立宽度。 */
   }
 
   .search-box { /* 移动端搜索框。 */

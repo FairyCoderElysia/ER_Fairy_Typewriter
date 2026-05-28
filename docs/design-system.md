@@ -105,10 +105,10 @@ font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
 - 结果页：搜索框、结果列表、筛选、解释入口要一眼可见。
 - 调试页：信息密度可以更高，但要有清楚层次。
 - 索引状态页：优先显示文档数、token 数、最近重建时间、失败记录。
+- 阶段 6 后索引状态页还应显示当前索引后端，例如 `memory` 或 `redis-zset-like`。
 
 ## 实现建议
 
 - 优先复用现有 `static/style.css`。
 - 新页面先对齐这份文档，再写布局。
 - 若与现有样式冲突，先改文档再改代码。
-

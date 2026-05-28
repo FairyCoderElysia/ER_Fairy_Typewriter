@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from collections import Counter, defaultdict
+from datetime import datetime, timezone
 
 from .models import (
     DocumentScoreExplanation,
@@ -52,8 +53,21 @@ class SearchIndex:
         raise NotImplementedError
 
 
+def create_search_index(backend: str = "memory") -> SearchIndex:
+    """按名称创建搜索索引后端。"""
+
+    normalized = backend.strip().lower()
+    if normalized in {"memory", "inmemory", "tfidf"}:
+        return InMemoryTfIdfIndex()
+    if normalized in {"redis", "redis-zset", "zset"}:
+        return RedisZSetLikeIndex()
+    raise ValueError(f"未知索引后端：{backend}")
+
+
 class InMemoryTfIdfIndex(SearchIndex):
     """内存版 TF-IDF 索引。"""
+
+    backend_name = "memory"
 
     def __init__(self) -> None:
         self.documents: dict[int, SearchDocument] = {}
@@ -113,7 +127,7 @@ class InMemoryTfIdfIndex(SearchIndex):
         missing_terms: list[str] = []
 
         for term, count in query_counts.items():
-            postings = self.inverted.get(term)
+            postings = self._postings(term)
             if not postings:
                 missing_terms.append(term)
                 continue
@@ -144,13 +158,14 @@ class InMemoryTfIdfIndex(SearchIndex):
             document = self.documents[doc_id]
             boost_score = self._vertical_boost(document, query)
             source_bonus = min(max(document.source_score, 0.0), 10.0) * 0.02
-            final_score = tfidf_score + boost_score + source_bonus
+            freshness_bonus = self._freshness_boost(document, query)
+            final_score = tfidf_score + boost_score + source_bonus + freshness_bonus
             results.append(
                 DocumentScoreExplanation(
                     document=document,
                     field_matches=field_matches[doc_id],
                     tfidf_score=tfidf_score,
-                    boost_score=boost_score + source_bonus,
+                    boost_score=boost_score + source_bonus + freshness_bonus,
                     final_score=final_score,
                 )
             )
@@ -171,6 +186,7 @@ class InMemoryTfIdfIndex(SearchIndex):
             term_count=len(self.inverted),
             posting_count=posting_count,
             last_rebuilt_at=self.last_rebuilt_at,
+            backend=self.backend_name,
         )
 
     def _weighted_field_terms(self, document: SearchDocument) -> dict[str, dict[str, float]]:
@@ -199,6 +215,9 @@ class InMemoryTfIdfIndex(SearchIndex):
             for term, weight in terms.items():
                 merged[term] += weight
         return dict(merged)
+
+    def _postings(self, term: str) -> dict[int, float]:
+        return self.inverted.get(term, {})
 
     def _field_matches(self, doc_id: int, term: str, query_weight: float, idf: float) -> list[FieldMatch]:
         matches: list[FieldMatch] = []
@@ -269,3 +288,67 @@ class InMemoryTfIdfIndex(SearchIndex):
     def _has_news_intent(self, query: str) -> bool:
         query_terms = set(tokenize(query))
         return any(term in query or term in query_terms for term in NEWS_INTENT_TERMS)
+
+    def _freshness_boost(self, document: SearchDocument, query: str) -> float:
+        """新闻意图查询下，给近期新闻一个轻量加分。"""
+
+        if not self._has_news_intent(query):
+            return 0.0
+        if document.entity_type != "news" and document.category != "news":
+            return 0.0
+
+        published_at = document.published_at or document.crawled_at
+        published = _parse_iso_datetime(published_at)
+        if published is None:
+            return 0.0
+
+        age_days = max((datetime.now(timezone.utc) - published).days, 0)
+        if age_days <= 7:
+            return 0.7
+        if age_days <= 30:
+            return 0.45
+        if age_days <= 90:
+            return 0.25
+        return 0.0
+
+
+def _parse_iso_datetime(value: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+class RedisZSetLikeIndex(InMemoryTfIdfIndex):
+    """Redis ZSet 风格倒排索引。
+
+    这个实现仍运行在本地内存中，但把 postings 额外保存成 Redis ZSet 常见形态：
+    term -> [(score, doc_id), ...]。后续接入真实 Redis 时，可以把这里的
+    redis_zsets 替换为 ZADD/ZRANGE/ZINTERSTORE 等命令。
+    """
+
+    backend_name = "redis-zset-like"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.redis_zsets: dict[str, list[tuple[float, int]]] = defaultdict(list)
+
+    def clear(self) -> None:
+        super().clear()
+        self.redis_zsets.clear()
+
+    def add(self, document: SearchDocument) -> None:
+        super().add(document)
+        assert document.id is not None
+        for term, weight in self.document_terms[document.id].items():
+            self.redis_zsets[term].append((weight, document.id))
+        for term in self.redis_zsets:
+            self.redis_zsets[term].sort(key=lambda item: item[0], reverse=True)
+
+    def _postings(self, term: str) -> dict[int, float]:
+        return {doc_id: weight for weight, doc_id in self.redis_zsets.get(term, [])}

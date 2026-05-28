@@ -17,6 +17,7 @@ def _doc(
     game_title: str = "",
     character_name: str = "",
     source_score: float = 0.7,
+    category: str | None = None,
 ) -> SearchDocument:
     return SearchDocument(
         url=f"local://anime/{slug}",
@@ -29,10 +30,18 @@ def _doc(
         game_title=game_title,
         character_name=character_name,
         source_score=source_score,
-        category="anime",
+        category=category or _category_for_entity(entity_type),
         source="sample",
         image_url="",
     )
+
+
+def _category_for_entity(entity_type: str) -> str:
+    if entity_type == "news":
+        return "news"
+    if entity_type == "character":
+        return "character"
+    return "anime"
 
 
 SAMPLE_DOCUMENTS = [

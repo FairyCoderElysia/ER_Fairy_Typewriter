@@ -36,10 +36,13 @@ from fastapi.templating import Jinja2Templates  # 渲染 HTML 模板。
 from pydantic import BaseModel, Field  # 定义请求体模型和字段校验规则。
 
 from .crawler import CrawlConfig, SmallCrawler  # 爬虫配置和爬虫实现。
-from .indexer import InMemoryTfIdfIndex, SearchIndex  # 内存搜索索引和接口。
+from .domain_terms import enrich_documents, load_domain_terms  # 加载别名词典并补全文档字段。
+from .indexer import SearchIndex, create_search_index  # 搜索索引工厂和接口。
+from .miyoushe import MiyousheFeedCrawler  # 米游社帖子流适配器。
 from .sample_data import SAMPLE_DOCUMENTS  # 内置样例资料。
 from .search import SearchService  # 搜索服务层。
-from .sources import find_source_config  # 读取 sources.example.json 中的受控数据源。
+from .site_feeds import ArticleFeedCrawler  # 公开站点文章流适配器。
+from .sources import SourceConfig, find_source_config  # 读取 sources.example.json 中的受控数据源。
 from .store import SQLiteDocumentStore  # SQLite 文档存储。
 
 
@@ -48,9 +51,17 @@ PROJECT_DIR = BASE_DIR.parent  # 项目根目录。
 DATA_PATH = Path(os.getenv("ERFAIRY_DB", PROJECT_DIR / "data" / "erfairy.sqlite3"))  # 允许用环境变量覆盖数据库路径。
 
 store = SQLiteDocumentStore(DATA_PATH)  # 文档持久化层。
-index: SearchIndex = InMemoryTfIdfIndex()  # 搜索索引层，类型先抽象成接口，便于后续切换实现。
+INDEX_BACKEND = os.getenv("ERFAIRY_INDEX_BACKEND", "memory")  # 可选：memory 或 redis-zset。
+index: SearchIndex = create_search_index(INDEX_BACKEND)  # 搜索索引层，便于切换实现做对照。
 search_service = SearchService(index)  # 搜索服务层，封装分页和高亮。
+domain_terms = load_domain_terms()  # 加载可维护的别名词典，供样例和抓取文档统一补全。
 DEV_MUTATION_ENABLED = os.getenv("ERFAIRY_DEV_MUTATIONS", "1").lower() not in {"0", "false", "no"}  # 本地开发接口默认开启。
+CATEGORY_OPTIONS = [
+    {"value": "all", "label": "全部"},
+    {"value": "anime", "label": "动漫/游戏"},
+    {"value": "news", "label": "资讯"},
+    {"value": "character", "label": "角色"},
+]
 
 
 @asynccontextmanager
@@ -62,7 +73,7 @@ async def lifespan(app: FastAPI):
         启动时写入样例数据并重建索引，关闭时无需额外清理。
     """
 
-    store.bulk_upsert(SAMPLE_DOCUMENTS)  # 写入/更新内置样例文档。
+    store.bulk_upsert(enrich_documents(SAMPLE_DOCUMENTS, domain_terms))  # 写入/更新内置样例文档。
     index.rebuild(store.all())  # 从 SQLite 全量重建内存索引。
     yield  # 服务运行期间控制权交给 FastAPI。
 
@@ -81,6 +92,7 @@ class CrawlRequest(BaseModel):
         max_depth: 链接扩展深度。
         delay_seconds: 请求间隔。
         category: 写入文档分类。
+        source_id: 可选，填写 sources.example.json 中的 ASCII id 时按该数据源配置抓取。
         source_name: 可选，填写 sources.example.json 中的名称时按该数据源配置抓取。
 
     设计思路：
@@ -92,6 +104,7 @@ class CrawlRequest(BaseModel):
     max_depth: int = Field(default=1, ge=0, le=3)  # 限制深度 0~3，防止爬虫扩散。
     delay_seconds: float = Field(default=0.5, ge=0.0, le=10.0)  # 限制请求间隔范围。
     category: str = "auto"  # 默认自动分类；手动传 anime/news/character 时优先使用手动值。
+    source_id: str = ""  # 推荐：使用 ASCII 数据源 ID，避免 PowerShell 中文编码问题。
     source_name: str = ""  # 可选：使用 sources.example.json 中的配置。
 
 
@@ -99,7 +112,7 @@ class CrawlRequest(BaseModel):
 def home(request: Request) -> HTMLResponse:
     """渲染搜索首页。"""
 
-    return templates.TemplateResponse(request, "home.html", {})  # 返回 Jinja2 模板响应。
+    return templates.TemplateResponse(request, "home.html", {"category_options": CATEGORY_OPTIONS})  # 返回 Jinja2 模板响应。
 
 
 @app.get("/search")  # GET 搜索；既支持浏览器 HTML，也支持 API JSON。
@@ -107,7 +120,7 @@ def search(
     request: Request,  # Request 用来读取 Accept 请求头。
     q: str = Query(default=""),  # 查询词，默认空字符串。
     page: int = Query(default=1, ge=1),  # 页码，FastAPI 自动校验 >=1。
-    category: str = Query(default="anime"),  # 分类过滤。
+    category: str = Query(default="all"),  # 分类过滤；all 表示搜索全部分类。
 ):
     """搜索接口。
 
@@ -116,17 +129,20 @@ def search(
         否则渲染 results.html 页面。
     """
 
-    payload = search_service.search(q, page=page, per_page=10, category=category or None)  # 调用搜索服务。
+    category_filter = _category_filter(category)  # all/空值表示不限制分类。
+    payload = search_service.search(q, page=page, per_page=10, category=category_filter)  # 调用搜索服务。
+    payload["category"] = category or "all"  # API 也返回当前分类，方便前端或脚本确认过滤范围。
+    payload["category_options"] = CATEGORY_OPTIONS
     wants_json = "application/json" in request.headers.get("accept", "")  # 判断调用方是否希望 JSON。
     if wants_json:  # API 调用场景。
         return payload  # FastAPI 会自动序列化 dict 为 JSON。
-    return templates.TemplateResponse(request, "results.html", {**payload, "category": category})  # 浏览器场景渲染 HTML。
+    return templates.TemplateResponse(request, "results.html", payload)  # 浏览器场景渲染 HTML。
 
 
 @app.get("/debug/search")  # GET 调试搜索；首版只返回 JSON，方便学习排序细节。
 def debug_search(
     q: str = Query(default=""),  # 查询词，默认空字符串。
-    category: str = Query(default="anime"),  # 分类过滤。
+    category: str = Query(default="all"),  # 分类过滤；all 表示搜索全部分类。
 ):
     """返回一次搜索的分词、候选召回和分数拆解。
 
@@ -134,7 +150,7 @@ def debug_search(
         学习阶段观察 TF-IDF、字段权重和 boost 如何共同影响排序。
     """
 
-    return search_service.explain(q, category=category or None)  # 返回结构化解释 JSON。
+    return search_service.explain(q, category=_category_filter(category))  # 返回结构化解释 JSON。
 
 
 @app.get("/debug/index")  # GET 索引状态；阶段一收尾提供最小可观察性。
@@ -145,7 +161,7 @@ def debug_index():
 
 
 @app.post("/search")  # 表单提交使用 POST，再重定向到 GET 搜索页。
-def search_form(q: str = Form(default=""), category: str = Form(default="anime")):
+def search_form(q: str = Form(default=""), category: str = Form(default="all")):
     """处理搜索表单提交。
 
     设计思路：
@@ -153,6 +169,14 @@ def search_form(q: str = Form(default=""), category: str = Form(default="anime")
     """
 
     return RedirectResponse(url=f"/search?{urlencode({'q': q, 'category': category})}", status_code=303)  # 303 表示用 GET 访问新地址。
+
+
+def _category_filter(category: str | None) -> str | None:
+    """把用户可见分类转换成索引层过滤值。"""
+
+    if not category or category == "all":
+        return None
+    return category
 
 
 @app.post("/crawl")  # 开发接口：触发爬虫。
@@ -166,9 +190,10 @@ def crawl(request: CrawlRequest):
     if not DEV_MUTATION_ENABLED:  # 生产环境可通过环境变量关闭抓取和重建接口。
         return {"detail": "开发写入接口已关闭，请设置 ERFAIRY_DEV_MUTATIONS=1 后再使用"}  # 明确提示。
 
-    crawl_config = _crawl_config_from_request(request)  # 合并请求体和可选数据源配置。
-    crawler = SmallCrawler()  # 创建爬虫实例。
-    result = crawler.crawl(crawl_config)  # 执行爬取。
+    crawl_config, source = _crawl_config_from_request(request)  # 合并请求体和可选数据源配置。
+    result = _crawl_with_source_strategy(crawl_config, source)  # 按数据源策略执行抓取。
+    _apply_source_score(result.documents, source)
+    result.documents = enrich_documents(result.documents, domain_terms)
     run_id = store.start_crawl_run(category=crawl_config.category)  # 记录这次抓取运行。
     saved = store.bulk_upsert(result.documents)  # 保存抓取文档。
     store.save_crawl_errors(run_id, result.errors)  # 保存抓取失败记录。
@@ -190,27 +215,60 @@ def crawl(request: CrawlRequest):
     }  # 返回本次运行、保存数、错误数、错误明细和总文档数。
 
 
-def _crawl_config_from_request(request: CrawlRequest) -> CrawlConfig:
+def _crawl_with_source_strategy(crawl_config: CrawlConfig, source: SourceConfig | None):
+    """按受控数据源策略选择通用爬虫或站点专用抓取器。"""
+
+    if source and source.parse_strategy == "miyoushe-feed":
+        return MiyousheFeedCrawler().crawl(
+            source_id=source.source_id,
+            max_pages=crawl_config.max_pages,
+            source_score=source.source_score,
+        )
+    if source and source.parse_strategy == "article-feed":
+        return ArticleFeedCrawler().crawl(
+            source_id=source.source_id,
+            max_pages=crawl_config.max_pages,
+            source_score=source.source_score,
+        )
+    crawler = SmallCrawler()  # 创建爬虫实例。
+    return crawler.crawl(crawl_config)  # 执行爬取。
+
+
+def _crawl_config_from_request(request: CrawlRequest) -> tuple[CrawlConfig, SourceConfig | None]:
     """从请求体构造爬虫配置，可选按 sources.example.json 覆盖。"""
 
-    if request.source_name:
-        source = find_source_config(request.source_name)
+    source_key = request.source_id or request.source_name
+    if source_key:
+        source = find_source_config(source_key)
         if source:
-            return source.to_crawl_config()
-        raise HTTPException(status_code=404, detail=f"未找到数据源配置：{request.source_name}")
+            return source.to_crawl_config(), source
+        raise HTTPException(status_code=404, detail=f"未找到数据源配置：{source_key}。建议使用 source_id，例如 miyoushe-ys")
 
     if not request.seeds:
-        raise HTTPException(status_code=422, detail="请提供 seeds，或提供 sources.example.json 中的 source_name")
+        raise HTTPException(status_code=422, detail="请提供 seeds，或提供 sources.example.json 中的 source_id/source_name")
 
     allowed_domains = {urlparse(seed).netloc for seed in request.seeds}  # 默认只允许抓种子域名。
-    return CrawlConfig(
-        seeds=request.seeds,
-        max_pages=request.max_pages,
-        max_depth=request.max_depth,
-        delay_seconds=request.delay_seconds,
-        allowed_domains=allowed_domains,
-        category=request.category,
+    return (
+        CrawlConfig(
+            seeds=request.seeds,
+            max_pages=request.max_pages,
+            max_depth=request.max_depth,
+            delay_seconds=request.delay_seconds,
+            allowed_domains=allowed_domains,
+            category=request.category,
+        ),
+        None,
     )
+
+
+def _apply_source_score(documents: list, source: SourceConfig | None) -> None:
+    """把受控数据源的来源评分补到抓取结果中。"""
+
+    if source is None or source.source_score <= 0:
+        return
+    for document in documents:
+        if document.source_score <= 0:
+            document.source_score = source.source_score
 
 
 @app.post("/reindex")  # 开发接口：重建索引。

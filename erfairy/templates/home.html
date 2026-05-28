@@ -32,9 +32,14 @@
     <p class="subtitle">爱莉希雅的妖精打字机，轻量搜索动漫、角色与二次元资料。</p> <!-- 产品说明。 -->
     <form class="search-box" action="/search" method="get"> <!-- GET 表单会跳转到 /search?q=关键词。 -->
       <input name="q" type="search" placeholder="搜索角色、作品、标签..." autocomplete="off" autofocus> <!-- q 对应 web.py 里的 Query 参数。 -->
-      <input type="hidden" name="category" value="anime"> <!-- 隐藏分类字段，首版默认搜索动漫/角色。 -->
+      <input type="hidden" name="category" value="all"> <!-- 默认搜索全部分类。 -->
       <button type="submit">搜索</button> <!-- 提交按钮。 -->
     </form>
+    <nav class="quick-filters" aria-label="搜索范围">
+      {% for option in category_options %}
+        <a href="/search?category={{ option.value }}">{{ option.label }}</a>
+      {% endfor %}
+    </nav>
   </main>
 </body>
 </html>

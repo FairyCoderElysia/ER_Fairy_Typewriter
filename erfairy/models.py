@@ -260,6 +260,7 @@ class IndexStats:
     term_count: int  # 不同 token 的数量。
     posting_count: int  # 倒排表中的 term-doc 关系数量。
     last_rebuilt_at: str  # 最近一次重建索引时间。
+    backend: str = "memory"  # 当前索引后端名称。
 
     def as_dict(self) -> dict[str, Any]:
         """转成状态接口可返回的字典。"""
@@ -269,6 +270,7 @@ class IndexStats:
             "term_count": self.term_count,
             "posting_count": self.posting_count,
             "last_rebuilt_at": self.last_rebuilt_at,
+            "backend": self.backend,
         }
 
 

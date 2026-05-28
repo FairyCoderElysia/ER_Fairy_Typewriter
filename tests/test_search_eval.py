@@ -22,7 +22,7 @@ def test_sample_search_eval_set(tmp_path, request):
     zero_results = 0
 
     for case in cases:
-        results, total = index.search(case["query"], category="anime", limit=3)
+        results, total = index.search(case["query"], category=None, limit=3)
         urls = [document.url for document, _score in results]
 
         if total == 0:

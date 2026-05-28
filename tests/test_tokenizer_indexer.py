@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from erfairy.indexer import InMemoryTfIdfIndex, SearchIndex
+from erfairy.indexer import InMemoryTfIdfIndex, RedisZSetLikeIndex, SearchIndex, create_search_index
 from erfairy.models import SearchDocument
 from erfairy.search import SearchService
 from erfairy.store import SQLiteDocumentStore
@@ -266,6 +266,64 @@ def test_stage4_source_score_is_only_a_light_bonus():
     assert results[0][0].id == 1
 
 
+def test_stage5_news_freshness_prefers_recent_news_for_news_intent():
+    docs = [
+        SearchDocument(
+            id=1,
+            url="local://old",
+            title="原神 最新活动公告",
+            content="原神最新活动公告。",
+            tags=["原神", "活动"],
+            entity_type="news",
+            category="news",
+            published_at="2024-01-01T00:00:00+00:00",
+        ),
+        SearchDocument(
+            id=2,
+            url="local://recent",
+            title="原神 最新活动公告",
+            content="原神最新活动公告。",
+            tags=["原神", "活动"],
+            entity_type="news",
+            category="news",
+            published_at="2026-05-27T00:00:00+00:00",
+        ),
+    ]
+    index = InMemoryTfIdfIndex()
+    index.rebuild(docs)
+    results, _ = index.search("原神 最新活动")
+    assert results[0][0].id == 2
+
+
+def test_stage5_freshness_does_not_affect_non_news_intent_query():
+    docs = [
+        SearchDocument(
+            id=1,
+            url="local://old",
+            title="原神 角色资料",
+            content="原神角色资料。",
+            tags=["原神"],
+            entity_type="work",
+            category="anime",
+            published_at="2024-01-01T00:00:00+00:00",
+        ),
+        SearchDocument(
+            id=2,
+            url="local://recent",
+            title="原神 角色资料",
+            content="原神角色资料。",
+            tags=["原神"],
+            entity_type="work",
+            category="anime",
+            published_at="2026-05-27T00:00:00+00:00",
+        ),
+    ]
+    index = InMemoryTfIdfIndex()
+    index.rebuild(docs)
+    results, _ = index.search("原神")
+    assert results[0][0].id == 1
+
+
 def test_search_service_returns_highlighted_snippet():
     doc = SearchDocument(
         id=1,
@@ -328,6 +386,48 @@ def test_index_stats_reports_basic_counts():
 def test_inmemory_index_implements_search_index_protocol():
     index = InMemoryTfIdfIndex()
     assert isinstance(index, SearchIndex)
+
+
+def test_stage6_can_create_index_backends_by_name():
+    assert isinstance(create_search_index("memory"), InMemoryTfIdfIndex)
+    assert isinstance(create_search_index("redis-zset"), RedisZSetLikeIndex)
+
+
+def test_stage6_redis_zset_like_index_matches_memory_top_result():
+    docs = [
+        SearchDocument(
+            id=1,
+            url="local://raiden",
+            title="雷电将军 原神角色资料",
+            content="雷电将军是原神角色。",
+            tags=["原神"],
+            aliases=["雷神", "影"],
+            entity_type="character",
+            game_title="原神",
+            character_name="雷电将军",
+        ),
+        SearchDocument(
+            id=2,
+            url="local://news",
+            title="原神 最新活动新闻",
+            content="最新活动公告。",
+            tags=["原神", "活动"],
+            entity_type="news",
+            game_title="原神",
+        ),
+    ]
+    memory = InMemoryTfIdfIndex()
+    redis_like = RedisZSetLikeIndex()
+    memory.rebuild(docs)
+    redis_like.rebuild(docs)
+
+    memory_results, memory_total = memory.search("雷神")
+    redis_results, redis_total = redis_like.search("雷神")
+
+    assert redis_total == memory_total
+    assert redis_results[0][0].id == memory_results[0][0].id
+    assert redis_like.stats().backend == "redis-zset-like"
+    assert redis_like.redis_zsets
 
 
 def test_sqlite_store_upserts_by_url(tmp_path):
