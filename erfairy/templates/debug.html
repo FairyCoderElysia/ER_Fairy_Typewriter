@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Debug Console - ER Fairy Typewriter</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">ER Fairy Typewriter</a>
+    <form class="search-box compact" action="/debug/search" method="get">
+      <input name="q" type="search" value="原神" aria-label="调试查询" autocomplete="off">
+      <input type="hidden" name="category" value="all">
+      <button type="submit">解释排序</button>
+    </form>
+  </header>
+
+  <main class="debug-layout">
+    <section class="debug-main">
+      <p class="meta">调试总览 · backend: {{ backend }} · {{ document_count }} documents</p>
+
+      <section class="debug-panel">
+        <h2>Index Snapshot</h2>
+        <dl class="debug-kv">
+          <dt>backend</dt>
+          <dd>{{ backend }}</dd>
+          <dt>documents</dt>
+          <dd>{{ document_count }}</dd>
+          <dt>terms</dt>
+          <dd>{{ term_count }}</dd>
+          <dt>postings</dt>
+          <dd>{{ posting_count }}</dd>
+        </dl>
+      </section>
+
+      <div class="debug-grid">
+        {% for link in links %}
+          <a class="debug-card-link" href="{{ link.href }}">
+            <section class="debug-panel debug-link-panel">
+              <p class="meta">{{ link.endpoint }}</p>
+              <h2>{{ link.title }}</h2>
+              <p>{{ link.description }}</p>
+            </section>
+          </a>
+        {% endfor %}
+      </div>
+    </section>
+  </main>
+</body>
+</html>

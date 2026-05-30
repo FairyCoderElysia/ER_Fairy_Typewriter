@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sources Debug - ER Fairy Typewriter</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">ER Fairy Typewriter</a>
+  </header>
+
+  <main class="debug-layout">
+    <section class="debug-main">
+      <p class="meta">数据源 · {{ configured_sources|length }} configured · {{ candidates|length }} candidates</p>
+
+      <section class="debug-panel">
+        <h2>Configured Sources</h2>
+        <table class="debug-table">
+          <thead>
+            <tr>
+              <th>id</th>
+              <th>strategy</th>
+              <th>category</th>
+              <th>url</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for source in configured_sources %}
+              <tr>
+                <td>{{ source.source_id }}</td>
+                <td>{{ source.parse_strategy }}</td>
+                <td>{{ source.category }}</td>
+                <td>{{ source.entry_url }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+
+      <section class="debug-panel">
+        <h2>Approved Candidate Sources</h2>
+        {% if approved_sources %}
+          <table class="debug-table">
+            <thead>
+              <tr>
+                <th>id</th>
+                <th>strategy</th>
+                <th>url</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for source in approved_sources %}
+                <tr>
+                  <td>{{ source.source_id }}</td>
+                  <td>{{ source.parse_strategy }}</td>
+                  <td>{{ source.entry_url }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <p class="empty">暂无审核通过的候选源。</p>
+        {% endif %}
+      </section>
+
+      <section class="debug-panel">
+        <h2>Candidates</h2>
+        {% if candidates %}
+          <table class="debug-table">
+            <thead>
+              <tr>
+                <th>id</th>
+                <th>status</th>
+                <th>type</th>
+                <th>url</th>
+                <th>defaults</th>
+                <th>reason</th>
+                <th>actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for candidate in candidates %}
+                <tr>
+                  <td>{{ candidate.id }}</td>
+                  <td>{{ candidate.status }}</td>
+                  <td>{{ candidate.source_type }}</td>
+                  <td>{{ candidate.url }}</td>
+                  <td>
+                    {% if candidate.config %}
+                      max={{ candidate.config.max_pages|default(50) }},
+                      category={{ candidate.config.category|default("news") }},
+                      score={{ candidate.config.source_score|default(0.7) }}
+                    {% else %}
+                      max=50, category=news, score=0.7
+                    {% endif %}
+                  </td>
+                  <td>{{ candidate.reason }}</td>
+                  <td>
+                    <div class="debug-actions">
+                      <form action="/sources/candidates/{{ candidate.id }}/test-crawl" method="post">
+                        <button type="submit">试抓</button>
+                      </form>
+                      <form action="/sources/candidates/{{ candidate.id }}/approve" method="post">
+                        <button type="submit">启用</button>
+                      </form>
+                      <form action="/sources/candidates/{{ candidate.id }}/approve?crawl=true" method="post">
+                        <button type="submit">启用并抓取</button>
+                      </form>
+                      <form action="/sources/candidates/{{ candidate.id }}/reject" method="post">
+                        <button type="submit">拒绝</button>
+                      </form>
+                    </div>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <p class="empty">暂无候选源。</p>
+        {% endif %}
+      </section>
+    </section>
+  </main>
+</body>
+</html>

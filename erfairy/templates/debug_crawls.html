@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Crawl Runs - ER Fairy Typewriter</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">ER Fairy Typewriter</a>
+    <form class="search-box compact" action="/debug/crawls" method="get">
+      <input name="limit" type="number" min="1" max="100" value="{{ limit }}" aria-label="显示数量">
+      <button type="submit">刷新</button>
+    </form>
+  </header>
+
+  <main class="debug-layout">
+    <section class="debug-main">
+      <p class="meta">抓取运行状态 · {{ run_count }} runs · {{ total_documents }} documents</p>
+
+      {% if not runs %}
+        <p class="empty">暂无抓取记录。调用 /crawl 后，这里会显示每次运行的保存数量和错误明细。</p>
+      {% else %}
+        <section class="debug-panel">
+          <h2>Recent Runs</h2>
+          <table class="debug-table">
+            <thead>
+              <tr>
+                <th>run_id</th>
+                <th>status</th>
+                <th>category</th>
+                <th>saved</th>
+                <th>errors</th>
+                <th>started</th>
+                <th>finished</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for run in runs %}
+                <tr>
+                  <td>{{ run.id }}</td>
+                  <td>{{ run.status }}</td>
+                  <td>{{ run.category }}</td>
+                  <td>{{ run.saved_count }}</td>
+                  <td>{{ run.error_count }}</td>
+                  <td>{{ run.started_at }}</td>
+                  <td>{{ run.finished_at or "running" }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </section>
+
+        {% for run in runs %}
+          <section class="debug-panel">
+            <h2>Run {{ run.id }} Errors</h2>
+            {% if run.errors %}
+              <table class="debug-table">
+                <thead>
+                  <tr>
+                    <th>stage</th>
+                    <th>depth</th>
+                    <th>category</th>
+                    <th>url</th>
+                    <th>message</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for error in run.errors %}
+                    <tr>
+                      <td>{{ error.stage }}</td>
+                      <td>{{ error.depth }}</td>
+                      <td>{{ error.category }}</td>
+                      <td>{{ error.url }}</td>
+                      <td>{{ error.message }}</td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            {% else %}
+              <p class="empty">这次抓取没有记录错误。</p>
+            {% endif %}
+          </section>
+        {% endfor %}
+      {% endif %}
+    </section>
+  </main>
+</body>
+</html>

@@ -60,3 +60,12 @@ def test_miyoushe_feed_crawler_builds_multiple_documents(monkeypatch):
 
 def test_miyoushe_feed_profiles_cover_three_games():
     assert set(MIYOUSHE_FEEDS) == {"miyoushe-ys", "miyoushe-bh3", "miyoushe-sr"}
+
+
+def test_miyoushe_feed_crawler_resolves_candidate_entry_url():
+    crawler = MiyousheFeedCrawler()
+
+    profile = crawler._resolve_profile("candidate-9", "https://www.miyoushe.com/sr/")
+
+    assert profile is not None
+    assert profile.source_id == "miyoushe-sr"

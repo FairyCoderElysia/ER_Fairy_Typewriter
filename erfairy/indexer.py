@@ -3,8 +3,18 @@
 from __future__ import annotations
 
 import math
+import os
+import time
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
+from urllib.parse import urlsplit, urlunsplit
+
+import requests
+
+try:
+    import redis
+except ImportError:  # pragma: no cover - covered when the optional backend is selected.
+    redis = None
 
 from .models import (
     DocumentScoreExplanation,
@@ -37,6 +47,12 @@ class SearchIndex:
     def rebuild(self, documents: list[SearchDocument]) -> None:
         raise NotImplementedError
 
+    def upsert_many(self, documents: list[SearchDocument]) -> None:
+        raise NotImplementedError
+
+    def delete_many(self, document_ids: list[int]) -> None:
+        raise NotImplementedError
+
     def search(
         self,
         query: str,
@@ -59,8 +75,19 @@ def create_search_index(backend: str = "memory") -> SearchIndex:
     normalized = backend.strip().lower()
     if normalized in {"memory", "inmemory", "tfidf"}:
         return InMemoryTfIdfIndex()
-    if normalized in {"redis", "redis-zset", "zset"}:
+    if normalized in {"redis-zset", "zset", "redis-zset-like", "zset-like"}:
         return RedisZSetLikeIndex()
+    if normalized in {"redis", "redis-real", "redis-server"}:
+        return RedisSearchIndex(
+            redis_url=os.getenv("ERFAIRY_REDIS_URL", "redis://localhost:6379/0"),
+            key_prefix=os.getenv("ERFAIRY_REDIS_PREFIX", "erfairy"),
+        )
+    if normalized in {"meili", "meilisearch"}:
+        return MeiliSearchIndex(
+            meili_url=os.getenv("ERFAIRY_MEILI_URL", "http://localhost:7700"),
+            api_key=os.getenv("ERFAIRY_MEILI_MASTER_KEY", ""),
+            index_uid=os.getenv("ERFAIRY_MEILI_INDEX", "erfairy_documents"),
+        )
     raise ValueError(f"未知索引后端：{backend}")
 
 
@@ -90,9 +117,25 @@ class InMemoryTfIdfIndex(SearchIndex):
             self.add(document)
         self.last_rebuilt_at = utc_now_iso()
 
+    def upsert_many(self, documents: list[SearchDocument]) -> None:
+        if not documents:
+            return
+        for document in documents:
+            self.add(document)
+        self.last_rebuilt_at = utc_now_iso()
+
+    def delete_many(self, document_ids: list[int]) -> None:
+        if not document_ids:
+            return
+        for document_id in document_ids:
+            self.remove(document_id)
+        self.last_rebuilt_at = utc_now_iso()
+
     def add(self, document: SearchDocument) -> None:
         if document.id is None:
             raise ValueError("Document must have an id before indexing")
+        if document.id in self.documents:
+            self.remove(document.id)
         field_terms = self._weighted_field_terms(document)
         terms = self._merge_field_terms(field_terms)
         self.documents[document.id] = document
@@ -101,6 +144,19 @@ class InMemoryTfIdfIndex(SearchIndex):
         for term, weight in terms.items():
             self.inverted[term][document.id] = weight
         self.doc_magnitudes[document.id] = math.sqrt(sum(value * value for value in terms.values()))
+
+    def remove(self, document_id: int) -> None:
+        old_terms = self.document_terms.pop(document_id, {})
+        for term in old_terms:
+            postings = self.inverted.get(term)
+            if postings is None:
+                continue
+            postings.pop(document_id, None)
+            if not postings:
+                self.inverted.pop(term, None)
+        self.documents.pop(document_id, None)
+        self.document_field_terms.pop(document_id, None)
+        self.doc_magnitudes.pop(document_id, None)
 
     def search(
         self,
@@ -324,6 +380,413 @@ def _parse_iso_datetime(value: str) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def _redis_from_url(redis_url: str):
+    if redis is None:
+        raise RuntimeError(
+            "Redis backend requires the 'redis' package. "
+            "Run 'pip install -r requirements.txt' first."
+        )
+    return redis.from_url(redis_url, decode_responses=True)
+
+
+class RedisSearchIndex(InMemoryTfIdfIndex):
+    """Real Redis ZSet postings backend.
+
+    Redis stores term -> doc_id weighted postings. The process still keeps
+    documents and field-level explanation data in memory for this teaching MVP.
+    """
+
+    backend_name = "redis"
+
+    def __init__(self, redis_url: str = "redis://localhost:6379/0", key_prefix: str = "erfairy") -> None:
+        super().__init__()
+        self.redis_url = redis_url
+        self.key_prefix = key_prefix.strip() or "erfairy"
+        self.redis_client = _redis_from_url(redis_url)
+        try:
+            self.redis_client.ping()
+        except Exception as exc:  # pragma: no cover - exact redis exception type is client-version dependent.
+            raise RuntimeError(
+                f"Cannot connect to Redis at {redis_url}. "
+                "Start Redis or switch ERFAIRY_INDEX_BACKEND back to memory."
+            ) from exc
+
+    def clear(self) -> None:
+        super().clear()
+        self._clear_redis()
+
+    def rebuild(self, documents: list[SearchDocument]) -> None:
+        self.clear()
+        for document in documents:
+            InMemoryTfIdfIndex.add(self, document)
+        self.last_rebuilt_at = utc_now_iso()
+        self._write_redis_index()
+
+    def upsert_many(self, documents: list[SearchDocument]) -> None:
+        if not documents:
+            return
+        for document in documents:
+            self.add(document)
+        self.last_rebuilt_at = utc_now_iso()
+        self._write_redis_meta()
+
+    def delete_many(self, document_ids: list[int]) -> None:
+        if not document_ids:
+            return
+        for document_id in document_ids:
+            self.remove(document_id)
+        self.last_rebuilt_at = utc_now_iso()
+        self._write_redis_meta()
+
+    def add(self, document: SearchDocument) -> None:
+        super().add(document)
+        assert document.id is not None
+        self._write_document_to_redis(document.id)
+        self._write_redis_meta()
+
+    def remove(self, document_id: int) -> None:
+        old_terms = list(self.document_terms.get(document_id, {}))
+        super().remove(document_id)
+        if not old_terms:
+            return
+        pipeline = self.redis_client.pipeline()
+        for term in old_terms:
+            pipeline.zrem(self._postings_key(term), str(document_id))
+        pipeline.execute()
+        self._cleanup_empty_terms(old_terms)
+
+    def stats(self) -> IndexStats:
+        terms_key = self._terms_key()
+        term_count = int(self.redis_client.scard(terms_key))
+        posting_count = 0
+        for term in self.redis_client.scan_iter(match=self._postings_key("*")):
+            posting_count += int(self.redis_client.zcard(term))
+        redis_last_rebuilt = self.redis_client.hget(self._meta_key(), "last_rebuilt_at")
+        return IndexStats(
+            document_count=len(self.documents),
+            term_count=term_count,
+            posting_count=posting_count,
+            last_rebuilt_at=redis_last_rebuilt or self.last_rebuilt_at,
+            backend=self.backend_name,
+        )
+
+    def debug_snapshot(self, term: str = "", term_limit: int = 24, postings_limit: int = 12) -> dict:
+        terms = sorted(str(item) for item in self.redis_client.smembers(self._terms_key()))
+        selected_term = term.strip()
+        if not selected_term and terms:
+            selected_term = terms[0]
+
+        rows = []
+        if selected_term:
+            for member, score in self.redis_client.zrevrange(
+                self._postings_key(selected_term),
+                0,
+                max(postings_limit - 1, 0),
+                withscores=True,
+            ):
+                doc_id = int(member)
+                document = self.documents.get(doc_id)
+                rows.append(
+                    {
+                        "doc_id": doc_id,
+                        "score": float(score),
+                        "title": document.title if document else "",
+                        "url": document.url if document else "",
+                        "category": document.category if document else "",
+                    }
+                )
+
+        keys = sorted(str(key) for key in self.redis_client.scan_iter(match=f"{self.key_prefix}:*"))
+        return {
+            "available": True,
+            "backend": self.backend_name,
+            "redis_url": _mask_redis_url(self.redis_url),
+            "key_prefix": self.key_prefix,
+            "keys": keys[:100],
+            "key_count": len(keys),
+            "terms_key": self._terms_key(),
+            "postings_key_pattern": self._postings_key("*"),
+            "meta_key": self._meta_key(),
+            "meta": self.redis_client.hgetall(self._meta_key()),
+            "term_count": len(terms),
+            "sample_terms": terms[:term_limit],
+            "selected_term": selected_term,
+            "selected_postings_key": self._postings_key(selected_term) if selected_term else "",
+            "postings": rows,
+            "posting_count_for_selected_term": int(self.redis_client.zcard(self._postings_key(selected_term)))
+            if selected_term
+            else 0,
+        }
+
+    def _postings(self, term: str) -> dict[int, float]:
+        rows = self.redis_client.zrevrange(self._postings_key(term), 0, -1, withscores=True)
+        postings: dict[int, float] = {}
+        for member, score in rows:
+            postings[int(member)] = float(score)
+        return postings
+
+    def _write_redis_index(self) -> None:
+        pipeline = self.redis_client.pipeline()
+        for term, postings in self.inverted.items():
+            pipeline.sadd(self._terms_key(), term)
+            pipeline.zadd(self._postings_key(term), {str(doc_id): weight for doc_id, weight in postings.items()})
+        pipeline.execute()
+        self._write_redis_meta()
+
+    def _write_document_to_redis(self, document_id: int) -> None:
+        pipeline = self.redis_client.pipeline()
+        for term, weight in self.document_terms[document_id].items():
+            pipeline.sadd(self._terms_key(), term)
+            pipeline.zadd(self._postings_key(term), {str(document_id): weight})
+        pipeline.execute()
+
+    def _write_redis_meta(self) -> None:
+        self.redis_client.hset(
+            self._meta_key(),
+            mapping={
+                "backend": self.backend_name,
+                "last_rebuilt_at": self.last_rebuilt_at,
+                "document_count": str(len(self.documents)),
+            },
+        )
+
+    def _cleanup_empty_terms(self, terms: list[str]) -> None:
+        pipeline = self.redis_client.pipeline()
+        for term in terms:
+            if int(self.redis_client.zcard(self._postings_key(term))) == 0:
+                pipeline.delete(self._postings_key(term))
+                pipeline.srem(self._terms_key(), term)
+        pipeline.execute()
+
+    def _clear_redis(self) -> None:
+        keys = list(self.redis_client.scan_iter(match=f"{self.key_prefix}:*"))
+        if keys:
+            self.redis_client.delete(*keys)
+
+    def _terms_key(self) -> str:
+        return f"{self.key_prefix}:terms"
+
+    def _postings_key(self, term: str) -> str:
+        return f"{self.key_prefix}:postings:{term}"
+
+    def _meta_key(self) -> str:
+        return f"{self.key_prefix}:meta"
+
+
+def _mask_redis_url(redis_url: str) -> str:
+    parsed = urlsplit(redis_url)
+    if not parsed.password:
+        return redis_url
+    username = parsed.username or ""
+    hostname = parsed.hostname or ""
+    port = f":{parsed.port}" if parsed.port else ""
+    userinfo = f"{username}:***@" if username else "***@"
+    return urlunsplit((parsed.scheme, f"{userinfo}{hostname}{port}", parsed.path, parsed.query, parsed.fragment))
+
+
+def _requests_session():
+    return requests.Session()
+
+
+class MeiliSearchIndex(InMemoryTfIdfIndex):
+    """Meilisearch-backed ranking adapter.
+
+    Meilisearch owns candidate retrieval. The Python process keeps SearchDocument
+    objects and re-ranks Meilisearch candidates with the local vertical scoring
+    rules so domain-specific boosts still apply.
+    """
+
+    backend_name = "meilisearch"
+
+    def __init__(
+        self,
+        meili_url: str = "http://localhost:7700",
+        api_key: str = "",
+        index_uid: str = "erfairy_documents",
+    ) -> None:
+        super().__init__()
+        self.meili_url = meili_url.rstrip("/")
+        self.api_key = api_key
+        self.index_uid = index_uid
+        self.session = _requests_session()
+        try:
+            self._request("GET", "/health")
+        except Exception as exc:  # pragma: no cover - exact requests exception type is environment-dependent.
+            raise RuntimeError(
+                f"Cannot connect to Meilisearch at {self.meili_url}. "
+                "Start Meilisearch or switch ERFAIRY_INDEX_BACKEND back to memory."
+            ) from exc
+        self._ensure_index()
+
+    def rebuild(self, documents: list[SearchDocument]) -> None:
+        self.clear()
+        for document in documents:
+            InMemoryTfIdfIndex.add(self, document)
+        self.last_rebuilt_at = utc_now_iso()
+        self._delete_all_documents()
+        self._add_documents_to_meili(list(self.documents.values()))
+
+    def upsert_many(self, documents: list[SearchDocument]) -> None:
+        if not documents:
+            return
+        for document in documents:
+            InMemoryTfIdfIndex.add(self, document)
+        self.last_rebuilt_at = utc_now_iso()
+        self._add_documents_to_meili(documents)
+
+    def delete_many(self, document_ids: list[int]) -> None:
+        if not document_ids:
+            return
+        for document_id in document_ids:
+            InMemoryTfIdfIndex.remove(self, document_id)
+            self._wait_for_task(self._request("DELETE", f"/indexes/{self.index_uid}/documents/{document_id}"))
+        self.last_rebuilt_at = utc_now_iso()
+
+    def search(
+        self,
+        query: str,
+        category: str | None = None,
+        limit: int = 10,
+        offset: int = 0,
+    ) -> tuple[list[tuple[SearchDocument, float]], int]:
+        explanation = self.explain(query, category=category, limit=limit, offset=offset)
+        return [(item.document, item.final_score) for item in explanation.results], explanation.candidate_count
+
+    def explain(
+        self,
+        query: str,
+        category: str | None = None,
+        limit: int = 10,
+        offset: int = 0,
+    ) -> SearchExplanation:
+        query_terms = tokenize(query)
+        if not query_terms:
+            return SearchExplanation(query=query, tokens=[], candidate_count=0, missing_terms=[], results=[])
+
+        fetch_limit = min(max(offset + limit, 50), 200)
+        body = {
+            "q": query,
+            "limit": fetch_limit,
+            "offset": 0,
+            "attributesToRetrieve": ["id"],
+            "showRankingScore": True,
+        }
+        if category:
+            body["filter"] = f"category = {self._quote_filter_value(category)}"
+        payload = self._request("POST", f"/indexes/{self.index_uid}/search", json=body)
+        hits = payload.get("hits", [])
+        meili_rank: dict[int, float] = {}
+        for rank, hit in enumerate(hits):
+            doc_id = int(hit["id"])
+            meili_rank[doc_id] = float(hit.get("_rankingScore") or (1.0 / (rank + 1)))
+
+        local_explanation = InMemoryTfIdfIndex.explain(self, query, category=category)
+        reranked: list[DocumentScoreExplanation] = []
+        for item in local_explanation.results:
+            doc_id = item.document.id
+            if doc_id not in meili_rank:
+                continue
+            meili_tiebreaker = meili_rank[doc_id] * 0.001
+            reranked.append(
+                DocumentScoreExplanation(
+                    document=item.document,
+                    field_matches=item.field_matches,
+                    tfidf_score=item.tfidf_score,
+                    boost_score=item.boost_score + meili_tiebreaker,
+                    final_score=item.final_score + meili_tiebreaker,
+                )
+            )
+        reranked.sort(key=lambda item: item.final_score, reverse=True)
+        page_results = reranked[offset : offset + limit]
+        return SearchExplanation(
+            query=query,
+            tokens=query_terms,
+            candidate_count=len(reranked),
+            missing_terms=local_explanation.missing_terms,
+            results=page_results,
+        )
+
+    def stats(self) -> IndexStats:
+        stats = super().stats()
+        return IndexStats(
+            document_count=stats.document_count,
+            term_count=stats.term_count,
+            posting_count=stats.posting_count,
+            last_rebuilt_at=stats.last_rebuilt_at,
+            backend=self.backend_name,
+        )
+
+    def _ensure_index(self) -> None:
+        response = self.session.request(
+            "GET",
+            f"{self.meili_url}/indexes/{self.index_uid}",
+            headers=self._headers(),
+            timeout=10,
+        )
+        if response.status_code == 404:
+            task = self._request("POST", "/indexes", json={"uid": self.index_uid, "primaryKey": "id"})
+            self._wait_for_task(task)
+        else:
+            response.raise_for_status()
+        filter_task = self._request(
+            "PUT",
+            f"/indexes/{self.index_uid}/settings/filterable-attributes",
+            json=["category"],
+        )
+        self._wait_for_task(filter_task)
+
+    def _delete_all_documents(self) -> None:
+        task = self._request("DELETE", f"/indexes/{self.index_uid}/documents")
+        self._wait_for_task(task)
+
+    def _add_documents_to_meili(self, documents: list[SearchDocument]) -> None:
+        if not documents:
+            return
+        payload = [self._document_payload(document) for document in documents]
+        task = self._request("POST", f"/indexes/{self.index_uid}/documents", json=payload)
+        self._wait_for_task(task)
+
+    def _document_payload(self, document: SearchDocument) -> dict:
+        data = document.as_dict()
+        data["id"] = document.id
+        data["tags_text"] = " ".join(document.tags)
+        data["aliases_text"] = " ".join(document.aliases)
+        return data
+
+    def _request(self, method: str, path: str, **kwargs) -> dict:
+        headers = self._headers(kwargs.pop("headers", {}))
+        response = self.session.request(method, f"{self.meili_url}{path}", headers=headers, timeout=10, **kwargs)
+        response.raise_for_status()
+        if not response.content:
+            return {}
+        return response.json()
+
+    def _headers(self, extra: dict | None = None) -> dict:
+        headers = dict(extra or {})
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
+
+    def _wait_for_task(self, payload: dict) -> None:
+        task_uid = payload.get("taskUid") or payload.get("uid")
+        if task_uid is None:
+            return
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            task = self._request("GET", f"/tasks/{task_uid}")
+            status = task.get("status")
+            if status in {"succeeded", "canceled"}:
+                return
+            if status == "failed":
+                raise RuntimeError(f"Meilisearch task failed: {task}")
+            time.sleep(0.05)
+        raise TimeoutError(f"Timed out waiting for Meilisearch task {task_uid}")
+
+    def _quote_filter_value(self, value: str) -> str:
+        escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{escaped}"'
+
+
 class RedisZSetLikeIndex(InMemoryTfIdfIndex):
     """Redis ZSet 风格倒排索引。
 
@@ -349,6 +812,14 @@ class RedisZSetLikeIndex(InMemoryTfIdfIndex):
             self.redis_zsets[term].append((weight, document.id))
         for term in self.redis_zsets:
             self.redis_zsets[term].sort(key=lambda item: item[0], reverse=True)
+
+    def remove(self, document_id: int) -> None:
+        old_terms = list(self.document_terms.get(document_id, {}))
+        super().remove(document_id)
+        for term in old_terms:
+            self.redis_zsets[term] = [(weight, doc_id) for weight, doc_id in self.redis_zsets[term] if doc_id != document_id]
+            if not self.redis_zsets[term]:
+                self.redis_zsets.pop(term, None)
 
     def _postings(self, term: str) -> dict[int, float]:
         return {doc_id: weight for weight, doc_id in self.redis_zsets.get(term, [])}

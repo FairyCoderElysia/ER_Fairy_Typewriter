@@ -21,6 +21,7 @@
 """
 
 from __future__ import annotations  # 支持较新的类型注解写法。
+from datetime import datetime, timedelta, timezone
 
 import html  # 用于 HTML 转义，防止摘要中的特殊字符破坏页面。
 import re  # 用于把命中词替换成 <mark> 高亮。
@@ -46,7 +47,15 @@ class SearchService:
     def __init__(self, index: SearchIndex) -> None:
         self.index = index  # 保存索引实例，后续 search() 使用它查询。
 
-    def search(self, query: str, page: int = 1, per_page: int = 10, category: str | None = None) -> dict:
+    def search(
+        self,
+        query: str,
+        page: int = 1,
+        per_page: int = 10,
+        category: str | None = None,
+        source: str | None = None,
+        date_range: str = "all",
+    ) -> dict:
         """执行一次搜索并返回 API 字典。
 
         入参：
@@ -62,7 +71,10 @@ class SearchService:
         page = max(page, 1)  # 防御：页码不能小于 1。
         per_page = min(max(per_page, 1), 50)  # 防御：每页 1~50，避免一次请求返回过多。
         offset = (page - 1) * per_page  # 分页公式：第 page 页从 offset 条开始。
-        ranked, total = self.index.search(query, category=category, limit=per_page, offset=offset)  # 调用索引层。
+        if self._has_fine_filters(source, date_range):
+            ranked, total = self._filtered_ranked_results(query, category, source, date_range, per_page, offset)
+        else:
+            ranked, total = self.index.search(query, category=category, limit=per_page, offset=offset)  # 调用索引层。
         results = [  # 把索引层结果包装成前端/API 需要的 dict。
             SearchResult(document=document, score=score, snippet=self.snippet(document, query)).as_dict()  # 生成摘要并字典化。
             for document, score in ranked  # 遍历当前页排序结果。
@@ -74,6 +86,64 @@ class SearchService:
             "total": total,  # 总命中数。
             "results": results,  # 当前页结果。
         }
+
+    def _has_fine_filters(self, source: str | None, date_range: str) -> bool:
+        return bool(source and source != "all") or date_range not in {"", "all"}
+
+    def _filtered_ranked_results(
+        self,
+        query: str,
+        category: str | None,
+        source: str | None,
+        date_range: str,
+        per_page: int,
+        offset: int,
+    ) -> tuple[list[tuple[SearchDocument, float]], int]:
+        try:
+            explanation = self.index.explain(query, category=category, limit=200, offset=0)  # type: ignore[call-arg]
+        except TypeError:
+            explanation = self.index.explain(query, category=category)
+        ranked = [
+            (item.document, item.final_score)
+            for item in explanation.results
+            if self._matches_source(item.document, source)
+            and self._matches_date_range(item.document, date_range)
+        ]
+        total = len(ranked)
+        return ranked[offset : offset + per_page], total
+
+    def _matches_source(self, document: SearchDocument, source: str | None) -> bool:
+        if not source or source == "all":
+            return True
+        return document.source == source
+
+    def _matches_date_range(self, document: SearchDocument, date_range: str) -> bool:
+        if date_range in {"", "all"}:
+            return True
+        days_by_range = {
+            "1d": 1,
+            "7d": 7,
+            "30d": 30,
+            "365d": 365,
+        }
+        days = days_by_range.get(date_range)
+        if days is None:
+            return True
+        timestamp = self._parse_iso_datetime(document.published_at or document.crawled_at)
+        if timestamp is None:
+            return False
+        return timestamp >= datetime.now(timezone.utc) - timedelta(days=days)
+
+    def _parse_iso_datetime(self, value: str) -> datetime | None:
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
 
     def explain(self, query: str, category: str | None = None) -> dict:
         """返回一次搜索的调试解释。

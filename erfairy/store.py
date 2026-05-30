@@ -88,6 +88,23 @@ class SQLiteDocumentStore:
                 """
             )
             conn.execute("CREATE INDEX IF NOT EXISTS idx_crawl_errors_run_id ON crawl_errors(crawl_run_id)")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS source_candidates (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    url TEXT NOT NULL UNIQUE,
+                    source_type TEXT NOT NULL,
+                    title TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    reason TEXT NOT NULL DEFAULT '',
+                    config_json TEXT NOT NULL DEFAULT '{}',
+                    discovered_at TEXT NOT NULL,
+                    approved_at TEXT NOT NULL DEFAULT ''
+                )
+                """
+            )
+            self._ensure_source_candidate_columns(conn)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_source_candidates_status ON source_candidates(status)")
 
     def _ensure_document_columns(self, conn: sqlite3.Connection) -> None:
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(documents)").fetchall()}
@@ -102,6 +119,11 @@ class SQLiteDocumentStore:
         for name, ddl in column_defs.items():
             if name not in columns:
                 conn.execute(f"ALTER TABLE documents ADD COLUMN {name} {ddl}")
+
+    def _ensure_source_candidate_columns(self, conn: sqlite3.Connection) -> None:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(source_candidates)").fetchall()}
+        if "config_json" not in columns:
+            conn.execute("ALTER TABLE source_candidates ADD COLUMN config_json TEXT NOT NULL DEFAULT '{}'")
 
     def upsert(self, document: SearchDocument) -> SearchDocument:
         tags_json = json.dumps(document.tags, ensure_ascii=False)
@@ -210,6 +232,11 @@ class SQLiteDocumentStore:
             row = conn.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
         return self._row_to_document(row) if row else None
 
+    def delete(self, doc_id: int) -> bool:
+        with self.connect() as conn:
+            cursor = conn.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
+        return cursor.rowcount > 0
+
     def clear(self) -> None:
         with self.connect() as conn:
             conn.execute("DELETE FROM documents")
@@ -301,6 +328,133 @@ class SQLiteDocumentStore:
             )
             for row in rows
         ]
+
+    def recent_crawl_runs(self, limit: int = 20) -> list[dict]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, started_at, finished_at, source_count, saved_count,
+                       error_count, category, status
+                FROM crawl_runs
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+
+        runs = []
+        for row in rows:
+            errors = [error.as_dict() for error in self.crawl_errors_for_run(int(row["id"]))]
+            runs.append(
+                {
+                    "id": int(row["id"]),
+                    "started_at": row["started_at"],
+                    "finished_at": row["finished_at"],
+                    "source_count": int(row["source_count"]),
+                    "saved_count": int(row["saved_count"]),
+                    "error_count": int(row["error_count"]),
+                    "category": row["category"],
+                    "status": row["status"],
+                    "errors": errors,
+                }
+            )
+        return runs
+
+    def upsert_source_candidate(
+        self,
+        url: str,
+        source_type: str,
+        title: str = "",
+        reason: str = "",
+        status: str = "pending",
+        config: dict | None = None,
+    ) -> dict:
+        config_json = json.dumps(config or {}, ensure_ascii=False)
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO source_candidates (
+                    url, source_type, title, status, reason, config_json, discovered_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(url) DO UPDATE SET
+                    source_type=excluded.source_type,
+                    title=excluded.title,
+                    reason=excluded.reason,
+                    config_json=excluded.config_json
+                """,
+                (url, source_type, title, status, reason, config_json, self._utc_now_iso()),
+            )
+            row = conn.execute("SELECT * FROM source_candidates WHERE url = ?", (url,)).fetchone()
+        return self._row_to_source_candidate(row)
+
+    def source_candidates(self, status: str | None = None, limit: int = 100) -> list[dict]:
+        with self.connect() as conn:
+            if status:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM source_candidates
+                    WHERE status = ?
+                    ORDER BY id DESC
+                    LIMIT ?
+                    """,
+                    (status, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM source_candidates ORDER BY id DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+        return [self._row_to_source_candidate(row) for row in rows]
+
+    def get_source_candidate(self, candidate_id: int) -> dict | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM source_candidates WHERE id = ?", (candidate_id,)).fetchone()
+        return self._row_to_source_candidate(row) if row else None
+
+    def approve_source_candidate(self, candidate_id: int) -> dict | None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE source_candidates
+                SET status = 'approved', approved_at = ?
+                WHERE id = ?
+                """,
+                (self._utc_now_iso(), candidate_id),
+            )
+            row = conn.execute("SELECT * FROM source_candidates WHERE id = ?", (candidate_id,)).fetchone()
+        return self._row_to_source_candidate(row) if row else None
+
+    def reject_source_candidate(self, candidate_id: int) -> dict | None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE source_candidates
+                SET status = 'rejected'
+                WHERE id = ?
+                """,
+                (candidate_id,),
+            )
+            row = conn.execute("SELECT * FROM source_candidates WHERE id = ?", (candidate_id,)).fetchone()
+        return self._row_to_source_candidate(row) if row else None
+
+    def _row_to_source_candidate(self, row: sqlite3.Row) -> dict:
+        try:
+            config = json.loads(row["config_json"] or "{}")
+        except json.JSONDecodeError:
+            config = {}
+        return {
+            "id": int(row["id"]),
+            "url": row["url"],
+            "source_type": row["source_type"],
+            "title": row["title"],
+            "status": row["status"],
+            "reason": row["reason"],
+            "config_json": row["config_json"],
+            "config": config,
+            "discovered_at": row["discovered_at"],
+            "approved_at": row["approved_at"],
+        }
 
     def _row_to_document(self, row: sqlite3.Row) -> SearchDocument:
         return SearchDocument(

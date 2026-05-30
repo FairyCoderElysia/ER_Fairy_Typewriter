@@ -2,11 +2,171 @@
 
 from __future__ import annotations
 
-from erfairy.indexer import InMemoryTfIdfIndex, RedisZSetLikeIndex, SearchIndex, create_search_index
-from erfairy.models import SearchDocument
+from erfairy import indexer as indexer_module
+from erfairy.indexer import (
+    InMemoryTfIdfIndex,
+    MeiliSearchIndex,
+    RedisSearchIndex,
+    RedisZSetLikeIndex,
+    SearchIndex,
+    create_search_index,
+)
+from erfairy.models import CrawlError, SearchDocument
 from erfairy.search import SearchService
 from erfairy.store import SQLiteDocumentStore
 from erfairy.tokenizer import tokenize
+
+
+class FakeRedis:
+    def __init__(self) -> None:
+        self.sets: dict[str, set[str]] = {}
+        self.zsets: dict[str, dict[str, float]] = {}
+        self.hashes: dict[str, dict[str, str]] = {}
+
+    def ping(self) -> bool:
+        return True
+
+    def pipeline(self):
+        return self
+
+    def execute(self) -> list[object]:
+        return []
+
+    def sadd(self, key: str, value: str):
+        self.sets.setdefault(key, set()).add(value)
+        return 1
+
+    def srem(self, key: str, value: str):
+        removed = value in self.sets.get(key, set())
+        self.sets.get(key, set()).discard(value)
+        return int(removed)
+
+    def zadd(self, key: str, mapping: dict[str, float]):
+        self.zsets.setdefault(key, {}).update(mapping)
+        return len(mapping)
+
+    def zrem(self, key: str, member: str):
+        removed = member in self.zsets.get(key, {})
+        self.zsets.get(key, {}).pop(member, None)
+        return int(removed)
+
+    def hset(self, key: str, mapping: dict[str, str]):
+        self.hashes.setdefault(key, {}).update(mapping)
+        return len(mapping)
+
+    def hget(self, key: str, field: str):
+        return self.hashes.get(key, {}).get(field)
+
+    def hgetall(self, key: str):
+        return dict(self.hashes.get(key, {}))
+
+    def scard(self, key: str) -> int:
+        return len(self.sets.get(key, set()))
+
+    def smembers(self, key: str):
+        return set(self.sets.get(key, set()))
+
+    def zcard(self, key: str) -> int:
+        return len(self.zsets.get(key, {}))
+
+    def zrevrange(self, key: str, start: int, end: int, withscores: bool = False):
+        rows = sorted(self.zsets.get(key, {}).items(), key=lambda item: item[1], reverse=True)
+        if end == -1:
+            sliced = rows[start:]
+        else:
+            sliced = rows[start : end + 1]
+        if withscores:
+            return sliced
+        return [member for member, _score in sliced]
+
+    def scan_iter(self, match: str):
+        prefix = match.removesuffix("*")
+        keys = set(self.sets) | set(self.zsets) | set(self.hashes)
+        return (key for key in keys if key.startswith(prefix))
+
+    def delete(self, *keys: str) -> int:
+        removed = 0
+        for key in keys:
+            removed += int(self.sets.pop(key, None) is not None)
+            removed += int(self.zsets.pop(key, None) is not None)
+            removed += int(self.hashes.pop(key, None) is not None)
+        return removed
+
+
+class FakeResponse:
+    def __init__(self, payload: dict | list | None = None, status_code: int = 200) -> None:
+        self.payload = payload
+        self.content = b"{}" if payload is not None else b""
+        self.status_code = status_code
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise AssertionError(f"HTTP {self.status_code}")
+        return None
+
+    def json(self):
+        return self.payload
+
+
+class FakeMeiliSession:
+    def __init__(self) -> None:
+        self.documents: dict[int, dict] = {}
+        self.requests: list[tuple[str, str]] = []
+        self.next_task_uid = 1
+        self.match_all_queries = False
+
+    def request(self, method: str, url: str, headers=None, timeout=10, **kwargs):
+        self.requests.append((method, url))
+        path = url.split("http://example.test", 1)[-1]
+        if path == "/health":
+            return FakeResponse({"status": "available"})
+        if path.startswith("/tasks/"):
+            return FakeResponse({"status": "succeeded"})
+        if method == "GET" and path == "/indexes/test":
+            return FakeResponse({"message": "not found"}, status_code=404)
+        if method == "POST" and path == "/indexes":
+            return self._task()
+        if method == "PUT" and path == "/indexes/test/settings/filterable-attributes":
+            return self._task()
+        if method == "DELETE" and path == "/indexes/test/documents":
+            self.documents.clear()
+            return self._task()
+        if method == "POST" and path == "/indexes/test/documents":
+            for document in kwargs["json"]:
+                self.documents[int(document["id"])] = document
+            return self._task()
+        if method == "DELETE" and path.startswith("/indexes/test/documents/"):
+            doc_id = int(path.rsplit("/", 1)[-1])
+            self.documents.pop(doc_id, None)
+            return self._task()
+        if method == "POST" and path == "/indexes/test/search":
+            body = kwargs["json"]
+            query = body["q"].lower()
+            hits = []
+            for document in self.documents.values():
+                haystack = " ".join(
+                    [
+                        document.get("title", ""),
+                        document.get("content", ""),
+                        document.get("summary", ""),
+                        document.get("tags_text", ""),
+                        document.get("aliases_text", ""),
+                    ]
+                ).lower()
+                if query and query not in haystack and not self.match_all_queries:
+                    continue
+                if body.get("filter") == 'category = "news"' and document.get("category") != "news":
+                    continue
+                hits.append({"id": document["id"], "_rankingScore": 1.0 / (len(hits) + 1)})
+            offset = body.get("offset", 0)
+            limit = body.get("limit", 20)
+            return FakeResponse({"hits": hits[offset : offset + limit], "estimatedTotalHits": len(hits)})
+        raise AssertionError(f"Unexpected Meilisearch request: {method} {path}")
+
+    def _task(self):
+        task_uid = self.next_task_uid
+        self.next_task_uid += 1
+        return FakeResponse({"taskUid": task_uid})
 
 
 def test_tokenize_supports_chinese_and_english():
@@ -393,6 +553,34 @@ def test_stage6_can_create_index_backends_by_name():
     assert isinstance(create_search_index("redis-zset"), RedisZSetLikeIndex)
 
 
+def test_stage6_can_create_real_redis_backend_by_name(monkeypatch):
+    fake = FakeRedis()
+    monkeypatch.setenv("ERFAIRY_REDIS_URL", "redis://example.test:6379/9")
+    monkeypatch.setenv("ERFAIRY_REDIS_PREFIX", "test-prefix")
+    monkeypatch.setattr(indexer_module, "_redis_from_url", lambda redis_url: fake)
+
+    index = create_search_index("redis")
+
+    assert isinstance(index, RedisSearchIndex)
+    assert index.redis_url == "redis://example.test:6379/9"
+    assert index.key_prefix == "test-prefix"
+
+
+def test_stage6_can_create_meilisearch_backend_by_name(monkeypatch):
+    fake = FakeMeiliSession()
+    monkeypatch.setenv("ERFAIRY_MEILI_URL", "http://example.test")
+    monkeypatch.setenv("ERFAIRY_MEILI_MASTER_KEY", "secret")
+    monkeypatch.setenv("ERFAIRY_MEILI_INDEX", "test")
+    monkeypatch.setattr(indexer_module, "_requests_session", lambda: fake)
+
+    index = create_search_index("meilisearch")
+
+    assert isinstance(index, MeiliSearchIndex)
+    assert index.meili_url == "http://example.test"
+    assert index.api_key == "secret"
+    assert index.index_uid == "test"
+
+
 def test_stage6_redis_zset_like_index_matches_memory_top_result():
     docs = [
         SearchDocument(
@@ -430,6 +618,225 @@ def test_stage6_redis_zset_like_index_matches_memory_top_result():
     assert redis_like.redis_zsets
 
 
+def test_stage6_incremental_upsert_replaces_existing_memory_terms():
+    index = InMemoryTfIdfIndex()
+    index.rebuild([SearchDocument(id=1, url="local://one", title="Raiden profile", content="Electro archon")])
+
+    index.upsert_many([SearchDocument(id=1, url="local://one", title="Nahida profile", content="Dendro archon")])
+
+    old_results, old_total = index.search("Raiden")
+    new_results, new_total = index.search("Nahida")
+    assert old_total == 0
+    assert old_results == []
+    assert new_total == 1
+    assert new_results[0][0].id == 1
+
+
+def test_stage6_incremental_delete_removes_memory_terms():
+    index = InMemoryTfIdfIndex()
+    index.rebuild([SearchDocument(id=1, url="local://one", title="Raiden profile", content="Electro archon")])
+
+    index.delete_many([1])
+
+    results, total = index.search("Raiden")
+    stats = index.stats()
+    assert total == 0
+    assert results == []
+    assert stats.document_count == 0
+    assert stats.term_count == 0
+
+
+def test_stage6_real_redis_index_writes_zsets_and_matches_memory(monkeypatch):
+    fake = FakeRedis()
+    monkeypatch.setattr(indexer_module, "_redis_from_url", lambda redis_url: fake)
+    docs = [
+        SearchDocument(
+            id=1,
+            url="local://raiden",
+            title="Raiden Shogun character profile",
+            content="Raiden Shogun is an Electro character.",
+            tags=["Genshin"],
+            aliases=["Raiden"],
+            entity_type="character",
+            game_title="Genshin",
+            character_name="Raiden Shogun",
+        ),
+        SearchDocument(
+            id=2,
+            url="local://news",
+            title="Genshin latest event news",
+            content="Latest event announcement.",
+            tags=["Genshin", "event"],
+            entity_type="news",
+            game_title="Genshin",
+        ),
+    ]
+    memory = InMemoryTfIdfIndex()
+    redis_index = RedisSearchIndex(redis_url="redis://example.test:6379/0", key_prefix="test")
+    memory.rebuild(docs)
+    redis_index.rebuild(docs)
+
+    memory_results, memory_total = memory.search("Raiden")
+    redis_results, redis_total = redis_index.search("Raiden")
+    stats = redis_index.stats()
+
+    assert redis_total == memory_total
+    assert redis_results[0][0].id == memory_results[0][0].id
+    assert stats.backend == "redis"
+    assert stats.term_count >= 1
+    assert stats.posting_count >= stats.term_count
+    assert fake.zsets
+
+
+def test_stage6_real_redis_incremental_upsert_replaces_old_postings(monkeypatch):
+    fake = FakeRedis()
+    monkeypatch.setattr(indexer_module, "_redis_from_url", lambda redis_url: fake)
+    redis_index = RedisSearchIndex(redis_url="redis://example.test:6379/0", key_prefix="test")
+    redis_index.rebuild([SearchDocument(id=1, url="local://one", title="Raiden profile", content="Electro archon")])
+
+    redis_index.upsert_many([SearchDocument(id=1, url="local://one", title="Nahida profile", content="Dendro archon")])
+
+    old_results, old_total = redis_index.search("Raiden")
+    new_results, new_total = redis_index.search("Nahida")
+    assert old_total == 0
+    assert old_results == []
+    assert new_total == 1
+    assert new_results[0][0].id == 1
+    assert "1" not in fake.zsets.get("test:postings:raiden", {})
+    assert "1" in fake.zsets["test:postings:nahida"]
+
+
+def test_stage6_real_redis_incremental_delete_removes_postings(monkeypatch):
+    fake = FakeRedis()
+    monkeypatch.setattr(indexer_module, "_redis_from_url", lambda redis_url: fake)
+    redis_index = RedisSearchIndex(redis_url="redis://example.test:6379/0", key_prefix="test")
+    redis_index.rebuild([SearchDocument(id=1, url="local://one", title="Raiden profile", content="Electro archon")])
+
+    redis_index.delete_many([1])
+
+    results, total = redis_index.search("Raiden")
+    stats = redis_index.stats()
+    assert total == 0
+    assert results == []
+    assert stats.document_count == 0
+    assert "test:postings:raiden" not in fake.zsets
+    assert "raiden" not in fake.sets.get("test:terms", set())
+
+
+def test_stage6_real_redis_debug_snapshot_shows_keys_terms_and_postings(monkeypatch):
+    fake = FakeRedis()
+    monkeypatch.setattr(indexer_module, "_redis_from_url", lambda redis_url: fake)
+    redis_index = RedisSearchIndex(redis_url="redis://user:secret@example.test:6379/0", key_prefix="test")
+    redis_index.rebuild(
+        [
+            SearchDocument(
+                id=1,
+                url="local://raiden",
+                title="Raiden Shogun character profile",
+                content="Raiden Shogun is an Electro character.",
+                aliases=["Raiden"],
+                entity_type="character",
+            )
+        ]
+    )
+
+    snapshot = redis_index.debug_snapshot(term="raiden")
+
+    assert snapshot["available"] is True
+    assert snapshot["backend"] == "redis"
+    assert snapshot["redis_url"] == "redis://user:***@example.test:6379/0"
+    assert snapshot["key_prefix"] == "test"
+    assert "test:terms" in snapshot["keys"]
+    assert "raiden" in snapshot["sample_terms"]
+    assert snapshot["selected_postings_key"] == "test:postings:raiden"
+    assert snapshot["postings"][0]["doc_id"] == 1
+    assert snapshot["postings"][0]["title"] == "Raiden Shogun character profile"
+
+
+def test_stage6_meilisearch_backend_searches_and_filters(monkeypatch):
+    fake = FakeMeiliSession()
+    monkeypatch.setattr(indexer_module, "_requests_session", lambda: fake)
+    index = MeiliSearchIndex(meili_url="http://example.test", api_key="", index_uid="test")
+    index.rebuild(
+        [
+            SearchDocument(id=1, url="local://raiden", title="Raiden Shogun profile", content="Electro archon"),
+            SearchDocument(
+                id=2,
+                url="local://news",
+                title="Raiden event news",
+                content="Latest event",
+                category="news",
+            ),
+        ]
+    )
+
+    results, total = index.search("Raiden", category="news")
+    explanation = index.explain("Raiden", category="news")
+
+    assert total == 1
+    assert results[0][0].id == 2
+    assert explanation.results[0].document.id == 2
+    assert index.stats().backend == "meilisearch"
+
+
+def test_stage6_meilisearch_backend_reranks_candidates_with_local_vertical_score(monkeypatch):
+    fake = FakeMeiliSession()
+    fake.match_all_queries = True
+    monkeypatch.setattr(indexer_module, "_requests_session", lambda: fake)
+    index = MeiliSearchIndex(meili_url="http://example.test", api_key="", index_uid="test")
+    index.rebuild(
+        [
+            SearchDocument(
+                id=1,
+                url="local://your-name",
+                title="Your Name Shinkai anime movie",
+                content="A famous animated movie.",
+                category="anime",
+                entity_type="work",
+            ),
+            SearchDocument(
+                id=2,
+                url="local://genshin",
+                title="Genshin Impact open world",
+                content="Genshin Impact character and game profile.",
+                aliases=["原神", "Genshin"],
+                category="anime",
+                entity_type="work",
+                game_title="Genshin Impact",
+            ),
+        ]
+    )
+
+    results, total = index.search("原神")
+
+    assert total == 1
+    assert results[0][0].id == 2
+    assert results[0][1] > 1.0
+
+
+def test_stage6_meilisearch_backend_incremental_update_and_delete(monkeypatch):
+    fake = FakeMeiliSession()
+    monkeypatch.setattr(indexer_module, "_requests_session", lambda: fake)
+    index = MeiliSearchIndex(meili_url="http://example.test", api_key="", index_uid="test")
+    index.rebuild([SearchDocument(id=1, url="local://one", title="Raiden profile", content="Electro")])
+
+    index.upsert_many([SearchDocument(id=1, url="local://one", title="Nahida profile", content="Dendro")])
+    old_results, old_total = index.search("Raiden")
+    new_results, new_total = index.search("Nahida")
+
+    assert old_total == 0
+    assert old_results == []
+    assert new_total == 1
+    assert new_results[0][0].id == 1
+
+    index.delete_many([1])
+    deleted_results, deleted_total = index.search("Nahida")
+
+    assert deleted_total == 0
+    assert deleted_results == []
+    assert 1 not in fake.documents
+
+
 def test_sqlite_store_upserts_by_url(tmp_path):
     store = SQLiteDocumentStore(tmp_path / "test.sqlite3")
     first = store.upsert(SearchDocument(url="local://same", title="旧标题", content="旧内容"))
@@ -437,6 +844,53 @@ def test_sqlite_store_upserts_by_url(tmp_path):
     assert first.id == second.id
     assert store.count() == 1
     assert store.get(second.id).title == "新标题"
+
+
+def test_sqlite_store_deletes_document_by_id(tmp_path):
+    store = SQLiteDocumentStore(tmp_path / "test.sqlite3")
+    document = store.upsert(SearchDocument(url="local://delete", title="Delete me", content="temporary"))
+
+    assert document.id is not None
+    assert store.delete(document.id) is True
+    assert store.delete(document.id) is False
+    assert store.get(document.id) is None
+    assert store.count() == 0
+
+
+def test_sqlite_store_lists_recent_crawl_runs_with_errors(tmp_path):
+    store = SQLiteDocumentStore(tmp_path / "test.sqlite3")
+    run_id = store.start_crawl_run(category="news")
+    store.save_crawl_errors(
+        run_id,
+        [
+            CrawlError(
+                url="https://example.com/fail",
+                stage="download",
+                message="timeout",
+                depth=1,
+                category="news",
+                crawled_at="2026-05-28T00:00:00+00:00",
+            )
+        ],
+    )
+    store.finish_crawl_run(
+        run_id,
+        source_count=1,
+        saved_count=2,
+        error_count=1,
+        category="news",
+        status="completed",
+    )
+
+    runs = store.recent_crawl_runs(limit=5)
+
+    assert len(runs) == 1
+    assert runs[0]["id"] == run_id
+    assert runs[0]["status"] == "completed"
+    assert runs[0]["saved_count"] == 2
+    assert runs[0]["error_count"] == 1
+    assert runs[0]["errors"][0]["url"] == "https://example.com/fail"
+    assert runs[0]["errors"][0]["message"] == "timeout"
 
 
 def test_sqlite_store_deduplicates_by_content_hash(tmp_path):

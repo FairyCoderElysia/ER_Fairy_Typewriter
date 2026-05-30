@@ -29,6 +29,7 @@ class SourceConfig:
     source_score: float = 0.0
     parse_strategy: str = "default"
     notes: str = ""
+    scheduler_interval_minutes: int = 0
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "SourceConfig":
@@ -44,6 +45,7 @@ class SourceConfig:
             source_score=float(data.get("source_score", 0.0)),
             parse_strategy=str(data.get("parse_strategy", "default")),
             notes=str(data.get("notes", "")),
+            scheduler_interval_minutes=int(data.get("scheduler_interval_minutes", 0)),
         )
 
     def to_crawl_config(self) -> CrawlConfig:

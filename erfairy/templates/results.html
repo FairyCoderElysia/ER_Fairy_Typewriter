@@ -37,8 +37,29 @@
   <main class="results-layout"> <!-- 结果页主体网格。 -->
     <aside class="filters"> <!-- 侧边筛选栏，用于在全部和精细分类之间切换。 -->
       {% for option in category_options %}
-        <a class="{% if category == option.value %}active{% endif %}" href="/search?q={{ query }}&category={{ option.value }}">{{ option.label }}</a>
+        <a class="{% if category == option.value %}active{% endif %}" href="/search?q={{ query|urlencode }}&category={{ option.value }}&source={{ source|urlencode }}&date_range={{ date_range }}">{{ option.label }}</a>
       {% endfor %}
+      <form class="fine-filters" action="/search" method="get">
+        <input type="hidden" name="q" value="{{ query }}">
+        <input type="hidden" name="category" value="{{ category }}">
+        <label>
+          来源
+          <select name="source">
+            {% for option in source_options %}
+              <option value="{{ option.value }}" {% if source == option.value %}selected{% endif %}>{{ option.label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>
+          时间
+          <select name="date_range">
+            {% for option in date_range_options %}
+              <option value="{{ option.value }}" {% if date_range == option.value %}selected{% endif %}>{{ option.label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <button type="submit">应用筛选</button>
+      </form>
     </aside>
     <section class="results"> <!-- 搜索结果列表。 -->
       {% if query %} <!-- 有查询词时展示命中总数。 -->
@@ -63,10 +84,10 @@
         {% endfor %}
         <nav class="pager"> <!-- 分页导航。 -->
           {% if page > 1 %} <!-- 不是第一页时显示上一页。 -->
-            <a href="/search?q={{ query }}&category={{ category }}&page={{ page - 1 }}">上一页</a>
+            <a href="/search?q={{ query|urlencode }}&category={{ category }}&source={{ source|urlencode }}&date_range={{ date_range }}&page={{ page - 1 }}">上一页</a>
           {% endif %}
           {% if page * per_page < total %} <!-- 当前页末尾还没覆盖 total 时显示下一页。 -->
-            <a href="/search?q={{ query }}&category={{ category }}&page={{ page + 1 }}">下一页</a>
+            <a href="/search?q={{ query|urlencode }}&category={{ category }}&source={{ source|urlencode }}&date_range={{ date_range }}&page={{ page + 1 }}">下一页</a>
           {% endif %}
         </nav>
       {% else %} <!-- 有查询但无结果状态。 -->

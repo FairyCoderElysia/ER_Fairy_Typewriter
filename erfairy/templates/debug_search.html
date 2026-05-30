@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Search Debug - ER Fairy Typewriter</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">ER Fairy Typewriter</a>
+    <form class="search-box compact" action="/debug/search" method="get">
+      <input name="q" type="search" value="{{ query }}" placeholder="输入查询词，例如 原神" autocomplete="off">
+      <input type="hidden" name="category" value="{{ category }}">
+      <button type="submit">调试</button>
+    </form>
+  </header>
+
+  <main class="debug-layout">
+    <section class="debug-main">
+      <p class="meta">搜索解释 · category: {{ category }} · candidates: {{ candidate_count }}</p>
+
+      <section class="debug-panel">
+        <h2>Query</h2>
+        <form class="debug-form" action="/debug/search" method="get">
+          <label>
+            Query
+            <input name="q" type="search" value="{{ query }}" autocomplete="off">
+          </label>
+          <label>
+            Category
+            <select name="category">
+              {% for option in category_options %}
+                <option value="{{ option.value }}" {% if category == option.value %}selected{% endif %}>{{ option.label }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <button type="submit">刷新</button>
+        </form>
+      </section>
+
+      <div class="debug-grid">
+        <section class="debug-panel">
+          <h2>Tokens</h2>
+          {% if tokens %}
+            <div class="debug-tags">
+              {% for token in tokens %}
+                <span>{{ token }}</span>
+              {% endfor %}
+            </div>
+          {% else %}
+            <p class="empty">暂无 token。</p>
+          {% endif %}
+        </section>
+
+        <section class="debug-panel">
+          <h2>Missing</h2>
+          {% if missing_terms %}
+            <div class="debug-tags">
+              {% for token in missing_terms %}
+                <span>{{ token }}</span>
+              {% endfor %}
+            </div>
+          {% else %}
+            <p class="empty">没有缺失 token。</p>
+          {% endif %}
+        </section>
+      </div>
+
+      {% if not query %}
+        <p class="empty">输入查询词后，这里会显示每个结果的 TF-IDF、boost、final score 和字段贡献。</p>
+      {% elif results %}
+        {% for item in results %}
+          <section class="debug-panel result-debug">
+            <div class="debug-result-head">
+              <div>
+                <h2>#{{ loop.index }} {{ item.document.title }}</h2>
+                <p class="meta">
+                  doc_id: {{ item.document.id }} · {{ item.document.category }} · {{ item.document.source or item.document.url }}
+                </p>
+              </div>
+              <dl class="score-kv">
+                <dt>tfidf</dt>
+                <dd>{{ '%.6f'|format(item.tfidf_score) }}</dd>
+                <dt>boost</dt>
+                <dd>{{ '%.6f'|format(item.boost_score) }}</dd>
+                <dt>final</dt>
+                <dd>{{ '%.6f'|format(item.final_score) }}</dd>
+              </dl>
+            </div>
+
+            {% if item.field_matches %}
+              <table class="debug-table">
+                <thead>
+                  <tr>
+                    <th>field</th>
+                    <th>term</th>
+                    <th>tf</th>
+                    <th>idf</th>
+                    <th>field_weight</th>
+                    <th>contribution</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for match in item.field_matches %}
+                    <tr>
+                      <td>{{ match.field }}</td>
+                      <td>{{ match.term }}</td>
+                      <td>{{ '%.6f'|format(match.tf) }}</td>
+                      <td>{{ '%.6f'|format(match.idf) }}</td>
+                      <td>{{ '%.6f'|format(match.field_weight) }}</td>
+                      <td>{{ '%.6f'|format(match.contribution) }}</td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            {% else %}
+              <p class="empty">这个后端没有返回字段级贡献，或该结果只来自外部召回。</p>
+            {% endif %}
+          </section>
+        {% endfor %}
+      {% else %}
+        <p class="empty">没有候选结果。</p>
+      {% endif %}
+    </section>
+  </main>
+</body>
+</html>

@@ -6,6 +6,7 @@ import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlparse
 
 import requests
 
@@ -63,8 +64,8 @@ MIYOUSHE_FEEDS = {
 class MiyousheFeedCrawler:
     """把米游社帖子列表 API 转换为搜索文档。"""
 
-    def crawl(self, source_id: str, max_pages: int, source_score: float) -> CrawlResult:
-        profile = MIYOUSHE_FEEDS.get(source_id)
+    def crawl(self, source_id: str, max_pages: int, source_score: float, entry_url: str = "") -> CrawlResult:
+        profile = self._resolve_profile(source_id, entry_url)
         if profile is None:
             return CrawlResult(
                 documents=[],
@@ -107,6 +108,18 @@ class MiyousheFeedCrawler:
 
         documents = [self._document_from_post(profile, post, source_score) for post in posts]
         return CrawlResult(documents=[document for document in documents if document.title], errors=[])
+
+    def _resolve_profile(self, source_id: str, entry_url: str = "") -> MiyousheFeedProfile | None:
+        if source_id in MIYOUSHE_FEEDS:
+            return MIYOUSHE_FEEDS[source_id]
+        parsed = urlparse(entry_url)
+        if parsed.netloc.lower() != "www.miyoushe.com":
+            return None
+        path = parsed.path.strip("/").split("/", 1)[0]
+        for profile in MIYOUSHE_FEEDS.values():
+            if profile.path == path:
+                return profile
+        return None
 
     def _fetch_posts(self, profile: MiyousheFeedProfile, limit: int) -> list[dict[str, Any]]:
         response = requests.get(

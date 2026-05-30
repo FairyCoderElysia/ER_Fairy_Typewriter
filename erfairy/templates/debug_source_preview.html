@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Candidate Preview - ER Fairy Typewriter</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">ER Fairy Typewriter</a>
+    <nav>
+      <a href="/debug/sources">Sources</a>
+      <a href="/debug">Debug</a>
+    </nav>
+  </header>
+
+  <main class="debug-layout">
+    <section class="debug-main">
+      <p class="meta">Candidate Preview · 候选源试抓预览 · {{ source_id }} · {{ parse_strategy }}</p>
+      <h1>{{ source_name }}</h1>
+
+      <section class="debug-panel">
+        <div class="metric-grid">
+          <div class="metric-card">
+            <span>would_save</span>
+            <strong>{{ would_save }}</strong>
+          </div>
+          <div class="metric-card">
+            <span>errors</span>
+            <strong>{{ errors }}</strong>
+          </div>
+          <div class="metric-card">
+            <span>category</span>
+            <strong>{{ category }}</strong>
+          </div>
+          <div class="metric-card">
+            <span>max_pages</span>
+            <strong>{{ max_pages }}</strong>
+          </div>
+        </div>
+        <p class="meta">{{ entry_url }}</p>
+      </section>
+
+      <section class="debug-panel">
+        <h2>Preview Documents</h2>
+        {% if preview_documents %}
+          <table class="debug-table">
+            <thead>
+              <tr>
+                <th>title</th>
+                <th>category</th>
+                <th>source</th>
+                <th>url</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for document in preview_documents %}
+                <tr>
+                  <td>{{ document.title }}</td>
+                  <td>{{ document.category }}</td>
+                  <td>{{ document.source }}</td>
+                  <td><a href="{{ document.url }}">{{ document.url }}</a></td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <p class="empty">本次试抓没有得到可入库文档。</p>
+        {% endif %}
+      </section>
+
+      {% if error_details %}
+        <section class="debug-panel">
+          <h2>Errors</h2>
+          <table class="debug-table">
+            <thead>
+              <tr>
+                <th>stage</th>
+                <th>message</th>
+                <th>url</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for error in error_details %}
+                <tr>
+                  <td>{{ error.stage }}</td>
+                  <td>{{ error.message }}</td>
+                  <td>{{ error.url }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </section>
+      {% endif %}
+    </section>
+  </main>
+</body>
+</html>

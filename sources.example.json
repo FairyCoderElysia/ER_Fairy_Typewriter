@@ -23,10 +23,11 @@
       "myanimelist.net"
     ],
     "category": "news",
-    "max_pages": 20,
+    "max_pages": 50,
     "max_depth": 0,
     "delay_seconds": 1.0,
     "source_score": 0.85,
+    "scheduler_interval_minutes": 60,
     "parse_strategy": "article-feed",
     "notes": "MyAnimeList 新闻列表源。先从列表页抽取多篇新闻链接，再抓详情页入库。"
   },
@@ -38,10 +39,11 @@
       "www.animenewsnetwork.com"
     ],
     "category": "news",
-    "max_pages": 20,
+    "max_pages": 50,
     "max_depth": 0,
     "delay_seconds": 1.0,
     "source_score": 0.9,
+    "scheduler_interval_minutes": 60,
     "parse_strategy": "article-feed",
     "notes": "Anime News Network 首页文章流。先从首页抽取多篇新闻/兴趣/新闻稿链接，再抓详情页入库。"
   },
@@ -53,10 +55,11 @@
       "fate-go.us"
     ],
     "category": "news",
-    "max_pages": 20,
+    "max_pages": 50,
     "max_depth": 0,
     "delay_seconds": 1.0,
     "source_score": 0.95,
+    "scheduler_interval_minutes": 60,
     "parse_strategy": "article-feed",
     "notes": "FGO 官方新闻 iframe 列表源。先从 webview 列表抽取多篇公告链接，再抓详情页入库。"
   },
@@ -68,10 +71,11 @@
       "www.miyoushe.com"
     ],
     "category": "anime",
-    "max_pages": 5,
+    "max_pages": 20,
     "max_depth": 0,
     "delay_seconds": 1.0,
     "source_score": 0.95,
+    "scheduler_interval_minutes": 60,
     "parse_strategy": "miyoushe-feed",
     "notes": "米哈游官方社区帖子流。通过公开帖子列表接口抓取多篇帖子，避免只保存 SPA 入口壳。"
   },
@@ -83,10 +87,11 @@
       "www.miyoushe.com"
     ],
     "category": "anime",
-    "max_pages": 5,
+    "max_pages": 20,
     "max_depth": 0,
     "delay_seconds": 1.0,
     "source_score": 0.95,
+    "scheduler_interval_minutes": 60,
     "parse_strategy": "miyoushe-feed",
     "notes": "米哈游官方社区帖子流。通过公开帖子列表接口抓取多篇帖子，避免只保存 SPA 入口壳。"
   },
@@ -98,10 +103,11 @@
       "www.miyoushe.com"
     ],
     "category": "anime",
-    "max_pages": 5,
+    "max_pages": 20,
     "max_depth": 0,
     "delay_seconds": 1.0,
     "source_score": 0.95,
+    "scheduler_interval_minutes": 60,
     "parse_strategy": "miyoushe-feed",
     "notes": "米哈游官方社区帖子流。通过公开帖子列表接口抓取多篇帖子，避免只保存 SPA 入口壳。"
   }

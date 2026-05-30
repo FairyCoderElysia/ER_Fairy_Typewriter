@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Index Compare - ER Fairy Typewriter</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">ER Fairy Typewriter</a>
+    <form class="search-box compact" action="/debug/compare-index" method="get">
+      <input name="q" type="search" value="{{ query }}" placeholder="输入查询词，例如 原神" autocomplete="off">
+      <input type="hidden" name="category" value="{{ category }}">
+      <button type="submit">比较</button>
+    </form>
+  </header>
+
+  <main class="debug-layout">
+    <section class="debug-main">
+      <p class="meta">索引后端对照 · {{ document_count }} documents · category: {{ category }}</p>
+
+      <section class="debug-panel">
+        <h2>Options</h2>
+        <form class="debug-form" action="/debug/compare-index" method="get">
+          <label>
+            Query
+            <input name="q" type="search" value="{{ query }}" autocomplete="off">
+          </label>
+          <label>
+            Category
+            <input name="category" type="text" value="{{ category }}">
+          </label>
+          <label>
+            Backends
+            <input name="backends" type="text" value="{% for item in backends %}{{ item.requested_backend }}{% if not loop.last %},{% endif %}{% endfor %}">
+          </label>
+          <label>
+            Limit
+            <input name="limit" type="number" min="1" max="20" value="{{ limit }}">
+          </label>
+          <button type="submit">刷新</button>
+        </form>
+      </section>
+
+      {% if not query %}
+        <p class="empty">输入查询词后，这里会并排展示不同索引后端的 Top 结果。</p>
+      {% endif %}
+
+      <div class="debug-grid compare-grid">
+        {% for backend in backends %}
+          <section class="debug-panel">
+            <h2>{{ backend.backend }}</h2>
+            {% if backend.status != "ok" %}
+              <p class="empty">{{ backend.error }}</p>
+            {% elif backend.results %}
+              <p class="meta">total: {{ backend.total }}</p>
+              <table class="debug-table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>score</th>
+                    <th>category</th>
+                    <th>title</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for item in backend.results %}
+                    <tr>
+                      <td>{{ item.rank }}</td>
+                      <td>{{ '%.6f'|format(item.score) }}</td>
+                      <td>{{ item.category }}</td>
+                      <td><a href="{{ item.url }}">{{ item.title }}</a></td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            {% else %}
+              <p class="empty">没有结果。</p>
+            {% endif %}
+          </section>
+        {% endfor %}
+      </div>
+    </section>
+  </main>
+</body>
+</html>

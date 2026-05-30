@@ -2,7 +2,7 @@
 
 这份文档用于配合代码学习搜索引擎全流程。建议不要一开始就追求复杂功能，而是按模块理解“数据如何进入系统，又如何被搜索出来”。
 
-当前进度：阶段 6 已开始。现在项目已经具备“fixture/公开站点 -> 爬虫 -> 解析 -> 领域词典补全 -> 去重存储 -> 可切换索引 -> 搜索 -> 调试解释 -> 评测”的完整闭环。学习重点不再是“能不能搜”，而是“数据如何受控进入系统、为什么这样排、为什么这样存、为什么这样更像真实搜索产品”。
+当前进度：阶段 7 持续采集体验已完成第一版。现在项目已经具备“fixture/公开站点/候选源 -> 爬虫 -> 解析 -> 领域词典补全 -> 去重存储 -> 增量索引 -> 可切换后端 -> 搜索 -> 调试解释 -> 评测”的完整闭环。学习重点不再是“能不能搜”，而是“数据如何受控进入系统、为什么这样排、为什么这样存、为什么这样持续更新、为什么这样更像真实搜索产品”。
 
 ## 1. 先跑通项目
 目标：确认本地环境能启动、能搜索、能运行测试。
@@ -73,10 +73,18 @@ uvicorn erfairy.web:app --reload
 1. `erfairy/crawler.py`
 2. `erfairy/parser.py`
 3. `erfairy/sources.py`
-4. `sources.example.json`
-5. `tests/test_crawler.py`
-6. `tests/test_parser.py`
-7. `tests/test_sources.py`
+4. `erfairy/source_discovery.py`
+5. `erfairy/generic_feeds.py`
+6. `erfairy/miyoushe.py`
+7. `erfairy/api_feeds.py`
+8. `erfairy/cn_site_feeds.py`
+9. `erfairy/crawl_scheduler.py`
+10. `sources.example.json`
+11. `tests/test_crawler.py`
+12. `tests/test_parser.py`
+13. `tests/test_sources.py`
+14. `tests/test_source_discovery.py`
+15. `tests/test_crawl_scheduler.py`
 
 重点问题：
 
@@ -89,7 +97,12 @@ uvicorn erfairy.web:app --reload
 - `sources.example.json` 里的 `source_score` 如何补进抓取文档？
 - MyAnimeList、Anime News Network、FGO 为什么要先抽列表链接，再抓详情页？
 - 米游社这类前端应用为什么不能只解析入口 HTML，而要通过帖子流接口生成多篇文档？
-- 为什么文章流源默认 `max_pages=20`，米游社源默认 `max_pages=5`？
+- 为什么文章流源默认 `max_pages=50`，米游社源默认 `max_pages=20`？
+- GameKee 和 TapTap 为什么需要专用抓取器，而不是只依赖通用 `html-list-feed`？
+- `/sources/discover` 为什么只生成候选源，而不是自动启用新站点？
+- 候选源的 `config_json` 为什么要保存 `parse_strategy`、`max_pages`、`category` 和 `source_score`？
+- 自动调度器为什么默认关闭，但默认间隔从 6 小时改为 1 小时？
+- `scheduler_interval_minutes` 为什么要支持按源覆盖？
 - `category=auto` 如何根据 URL、标题、摘要、标签和 `entity_type` 推断 `news`、`character` 或 `anime`？
 - 为什么公开站点默认使用 `max_depth=0` 和较小的 `max_pages`？
 
@@ -134,6 +147,8 @@ Invoke-RestMethod `
 GET /debug/search?q=原神&category=anime
 ```
 
+浏览器打开时会看到 HTML 调试页，分区展示 tokens、missing terms、Top 结果、TF-IDF、boost、final score 和字段贡献。脚本或自动化测试需要原始结构时，带上 `Accept: application/json` 即可继续拿 JSON。
+
 观察：
 
 - `tokens`：查询被分成了哪些词。
@@ -167,7 +182,7 @@ GET /debug/index
 - `term_count`：当前索引里的 token 数。
 - `posting_count`：倒排索引里的 term-doc 关系数量。
 - `last_rebuilt_at`：最近一次重建索引的时间。
-- `backend`：当前索引后端，例如 `memory` 或 `redis-zset-like`。
+- `backend`：当前索引后端，例如 `memory`、`redis-zset-like` 或 `redis`。
 
 如果想切换到 Redis ZSet 风格教学后端：
 
@@ -183,6 +198,66 @@ GET /debug/index
 ```
 
 观察 `backend` 是否变为 `redis-zset-like`。这个后端不需要外部 Redis 服务，它用于学习“Redis ZSet 倒排表长什么样，以及同一批文档能否在不同后端下保持搜索结果一致”。
+
+如果想接入真实 Redis：
+
+```powershell
+docker run --name erfairy-redis -p 6379:6379 -d redis:7
+$env:ERFAIRY_INDEX_BACKEND="redis"
+$env:ERFAIRY_REDIS_URL="redis://localhost:6379/0"
+$env:ERFAIRY_REDIS_PREFIX="erfairy"
+uvicorn erfairy.web:app --reload
+```
+
+再次访问 `/debug/index`，观察 `backend` 是否变为 `redis`。当前真实 Redis 后端把倒排 postings 写入 Redis ZSet，文档对象和字段解释缓存仍保留在 Python 进程内，方便继续学习排序和解释链路。
+
+再打开 Redis 结构可视化页面：
+
+```http
+GET /debug/redis
+GET /debug/redis?term=genshin
+```
+
+重点观察 `erfairy:terms`、`erfairy:postings:<term>` 和 `erfairy:meta`。其中 postings 表示“某个 token 命中了哪些 doc_id，以及权重是多少”。
+
+如果想切换到 Meilisearch 专业搜索后端：
+
+```powershell
+$env:ERFAIRY_INDEX_BACKEND="meilisearch"
+$env:ERFAIRY_MEILI_URL="http://localhost:7700"
+$env:ERFAIRY_MEILI_MASTER_KEY=""
+$env:ERFAIRY_MEILI_INDEX="erfairy_documents"
+uvicorn erfairy.web:app --reload
+```
+
+再次访问 `/debug/index`，观察 `backend` 是否变为 `meilisearch`。这个后端由 Meilisearch 负责召回候选，再由项目自己的字段权重、别名、垂直 boost 和新鲜度规则做二次排序。学习重点是比较“自研 TF-IDF/Redis postings”和“专业搜索引擎召回 + 本地垂直重排”的差异。
+
+抓取新内容时，`/crawl` 现在会返回：
+
+```json
+{
+  "index_update": "incremental",
+  "indexed": 3
+}
+```
+
+这表示本次保存的文档已通过 `SearchIndex.upsert_many()` 增量写入索引。同一个 `doc_id` 被更新时，旧 token postings 会先被移除，再写入新 token postings。
+
+删除文档时可以调用：
+
+```http
+DELETE /documents/{doc_id}
+```
+
+这个接口会删除 SQLite 里的文档，并通过 `SearchIndex.delete_many()` 增量移除索引 postings。`/reindex` 仍然保留全量重建，用作调试和兜底。
+
+如果想复盘抓取过程，打开：
+
+```http
+GET /debug/crawls
+```
+
+这个页面会列出最近的 `crawl_runs`，并展开每次运行的 `crawl_errors`。当你发现 `/crawl` 返回 `errors > 0` 时，优先看这里，而不是直接猜 parser 或网络哪里坏了。
 
 注意：`/search` 默认搜索全部分类。抓取新闻源后，如果只想看资讯结果，可以使用：
 
@@ -251,13 +326,24 @@ POST /reindex
 - 为什么要测试关闭 `ERFAIRY_DEV_MUTATIONS` 后 `/crawl` 和 `/reindex` 不再执行写操作？
 - 为什么要测试本地 fixture 抓取、公开源配置加载、自动分类和标题相似度去重？
 
-## 10. 阶段 6 怎么继续学
+## 10. 阶段 6/7 怎么继续学
 
-阶段 5 已经把二次元垂直化和可控数据采集闭环打通，阶段 6 已经开始做索引后端对照。下一步建议按这个顺序继续：
+阶段 6 已经完成索引后端对照、真实 Redis、Meilisearch、完整增量索引和多后端 debug；阶段 7 已经完成第一轮前端调试体验与持续采集体验。下一步建议按这个顺序继续：
 
 1. 先看 `aliases`、`entity_type`、`game_title`、`character_name`、`source_score` 在 `erfairy/models.py` 和 `erfairy/indexer.py` 里的流动。
 2. 再看 `content_hash`、canonical URL 和标题相似度在 `erfairy/parser.py` 与 `erfairy/store.py` 里的去重链路。
 3. 再用 `/debug/search` 对照每个字段的分数贡献。
 4. 再用 `tests/test_search_eval.py` 看调权重后哪条查询变好、哪条查询变差。
 5. 再切换 `ERFAIRY_INDEX_BACKEND=redis-zset`，对照 `memory` 和 `redis-zset-like` 的 `/debug/index`。
-6. 最后再去补抓取状态页面、真实 Redis 后端和专业搜索引擎对照。
+6. 再启动真实 Redis，切换 `ERFAIRY_INDEX_BACKEND=redis`，观察 Redis ZSet postings 与搜索结果是否一致。
+7. 再打开 `/debug/redis`，用不同 token 查看 Redis key、terms 和 postings。
+8. 再观察 `/crawl` 返回的 `index_update=incremental`，理解“抓一批、更新一批索引”和全量 `/reindex` 的区别。
+9. 再用 `DELETE /documents/{doc_id}` 删除一篇测试文档，观察搜索结果和 `/debug/redis` postings 是否同步消失。
+10. 再打开 `/debug/crawls`，理解 `crawl_runs` / `crawl_errors` 如何帮助定位抓取失败。
+11. 再切换 `ERFAIRY_INDEX_BACKEND=meilisearch`，观察专业搜索引擎召回和自研索引有什么不同。
+12. 打开 `/debug/compare-index?q=原神&backends=memory,redis-zset,meilisearch`，把 memory / redis / meilisearch 的同一查询结果放在一起对照。
+13. 打开 `/debug` 总览页，熟悉搜索、索引、Redis、抓取、候选源和调度器这些调试入口如何互相补位。
+14. 用 `/sources/discover` 尝试一个 RSS/Sitemap 站点，再用 `/sources/candidates/{id}/test-crawl` 试抓，确认 `would_save`、`errors` 和 `preview_documents`。
+15. 用米游社、萌娘百科、Bangumi、TapTap 或 GameKee 再试一次 Profile 型候选源，观察 `source_type` 和 `config_json` 与普通 RSS 候选有什么不同。
+16. 打开 `/debug/crawl-scheduler`，理解全局 interval、每源 `scheduler_interval_minutes`、`last_run_at` 和 `next_run_at` 如何决定下一次自动抓取。
+17. 新增真实内容后运行 `python -m pytest tests/test_search_eval.py`，确认 Top1/Top3 不因为数据增多而退化。

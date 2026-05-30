@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Crawl Scheduler - ER Fairy Typewriter</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">ER Fairy Typewriter</a>
+  </header>
+
+  <main class="debug-layout">
+    <section class="debug-main">
+      <p class="meta">抓取调度 · {% if enabled %}已启用{% else %}未启用{% endif %}</p>
+      <section class="debug-panel">
+        <h2>Scheduler</h2>
+        <dl class="debug-kv">
+          <dt>enabled</dt>
+          <dd>{{ enabled }}</dd>
+          <dt>running</dt>
+          <dd>{{ running }}</dd>
+          <dt>interval</dt>
+          <dd>{{ interval_minutes }} minutes</dd>
+          <dt>sources</dt>
+          <dd>{{ source_ids }}</dd>
+          <dt>last_run_at</dt>
+          <dd>{{ last_run_at or "-" }}</dd>
+          <dt>next_run_at</dt>
+          <dd>{{ next_run_at or "-" }}</dd>
+        </dl>
+      </section>
+      <section class="debug-panel">
+        <h2>Last Result</h2>
+        <pre class="debug-code">{{ last_result }}</pre>
+      </section>
+      <section class="debug-panel">
+        <h2>Source Schedule</h2>
+        {% if sources %}
+          <table class="debug-table">
+            <thead>
+              <tr>
+                <th>source</th>
+                <th>interval</th>
+                <th>last_run_at</th>
+                <th>next_run_at</th>
+                <th>last_result</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for source in sources %}
+                <tr>
+                  <td>{{ source.source_id }}<br><span class="meta">{{ source.source_name }}</span></td>
+                  <td>{{ source.interval_minutes }} minutes</td>
+                  <td>{{ source.last_run_at or "-" }}</td>
+                  <td>{{ source.next_run_at or "-" }}</td>
+                  <td><pre class="debug-code">{{ source.last_result }}</pre></td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <p class="empty">暂无可调度数据源。</p>
+        {% endif %}
+      </section>
+    </section>
+  </main>
+</body>
+</html>

@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Redis Debug - ER Fairy Typewriter</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">ER Fairy Typewriter</a>
+    <form class="search-box compact" action="/debug/redis" method="get">
+      <input name="term" type="search" value="{{ selected_term }}" placeholder="输入 token，例如 genshin 或 原神" autocomplete="off">
+      <button type="submit">查看</button>
+    </form>
+  </header>
+
+  <main class="debug-layout">
+    <section class="debug-main">
+      <p class="meta">Redis 索引结构 · backend: {{ backend }}</p>
+
+      {% if not available %}
+        <p class="empty">{{ message }}</p>
+        <pre class="debug-code">{{ hint }}</pre>
+      {% else %}
+        <div class="debug-grid">
+          <div class="debug-panel">
+            <h2>连接</h2>
+            <dl class="debug-kv">
+              <dt>URL</dt>
+              <dd>{{ redis_url }}</dd>
+              <dt>Prefix</dt>
+              <dd>{{ key_prefix }}</dd>
+              <dt>Keys</dt>
+              <dd>{{ key_count }}</dd>
+              <dt>Terms</dt>
+              <dd>{{ term_count }}</dd>
+            </dl>
+          </div>
+
+          <div class="debug-panel">
+            <h2>Meta</h2>
+            {% if meta %}
+              <dl class="debug-kv">
+                {% for key, value in meta.items() %}
+                  <dt>{{ key }}</dt>
+                  <dd>{{ value }}</dd>
+                {% endfor %}
+              </dl>
+            {% else %}
+              <p class="empty">暂无 meta 信息</p>
+            {% endif %}
+          </div>
+        </div>
+
+        <section class="debug-panel">
+          <h2>Keys</h2>
+          <pre class="debug-code">{% for key in keys %}{{ key }}
+{% endfor %}</pre>
+        </section>
+
+        <section class="debug-panel">
+          <h2>Sample Terms</h2>
+          <div class="debug-tags">
+            {% for item in sample_terms %}
+              <a href="/debug/redis?term={{ item }}">{{ item }}</a>
+            {% endfor %}
+          </div>
+        </section>
+
+        <section class="debug-panel">
+          <h2>Postings: {{ selected_term or "无" }}</h2>
+          {% if selected_term %}
+            <p class="meta">{{ selected_postings_key }} · {{ posting_count_for_selected_term }} docs</p>
+          {% endif %}
+          {% if postings %}
+            <table class="debug-table">
+              <thead>
+                <tr>
+                  <th>doc_id</th>
+                  <th>score</th>
+                  <th>category</th>
+                  <th>title</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for item in postings %}
+                  <tr>
+                    <td>{{ item.doc_id }}</td>
+                    <td>{{ '%.6f'|format(item.score) }}</td>
+                    <td>{{ item.category }}</td>
+                    <td><a href="{{ item.url }}">{{ item.title }}</a></td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          {% else %}
+            <p class="empty">这个 token 当前没有 postings。</p>
+          {% endif %}
+        </section>
+      {% endif %}
+    </section>
+  </main>
+</body>
+</html>
