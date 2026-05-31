@@ -102,6 +102,7 @@ class InMemoryTfIdfIndex(SearchIndex):
         self.document_field_terms: dict[int, dict[str, dict[str, float]]] = {}
         self.inverted: dict[str, dict[int, float]] = defaultdict(dict)
         self.doc_magnitudes: dict[int, float] = {}
+        self.posting_count = 0
         self.last_rebuilt_at = ""
 
     def clear(self) -> None:
@@ -110,6 +111,7 @@ class InMemoryTfIdfIndex(SearchIndex):
         self.document_field_terms.clear()
         self.inverted.clear()
         self.doc_magnitudes.clear()
+        self.posting_count = 0
 
     def rebuild(self, documents: list[SearchDocument]) -> None:
         self.clear()
@@ -143,10 +145,12 @@ class InMemoryTfIdfIndex(SearchIndex):
         self.document_field_terms[document.id] = field_terms
         for term, weight in terms.items():
             self.inverted[term][document.id] = weight
+        self.posting_count += len(terms)
         self.doc_magnitudes[document.id] = math.sqrt(sum(value * value for value in terms.values()))
 
     def remove(self, document_id: int) -> None:
         old_terms = self.document_terms.pop(document_id, {})
+        self.posting_count = max(0, self.posting_count - len(old_terms))
         for term in old_terms:
             postings = self.inverted.get(term)
             if postings is None:
@@ -215,7 +219,8 @@ class InMemoryTfIdfIndex(SearchIndex):
             boost_score = self._vertical_boost(document, query)
             source_bonus = min(max(document.source_score, 0.0), 10.0) * 0.02
             freshness_bonus = self._freshness_boost(document, query)
-            final_score = tfidf_score + boost_score + source_bonus + freshness_bonus
+            quality_bonus = self._quality_boost(document)
+            final_score = tfidf_score + boost_score + source_bonus + freshness_bonus + quality_bonus
             results.append(
                 DocumentScoreExplanation(
                     document=document,
@@ -223,6 +228,7 @@ class InMemoryTfIdfIndex(SearchIndex):
                     tfidf_score=tfidf_score,
                     boost_score=boost_score + source_bonus + freshness_bonus,
                     final_score=final_score,
+                    quality_score=quality_bonus,
                 )
             )
 
@@ -236,11 +242,10 @@ class InMemoryTfIdfIndex(SearchIndex):
         )
 
     def stats(self) -> IndexStats:
-        posting_count = sum(len(postings) for postings in self.inverted.values())
         return IndexStats(
             document_count=len(self.documents),
             term_count=len(self.inverted),
-            posting_count=posting_count,
+            posting_count=self.posting_count,
             last_rebuilt_at=self.last_rebuilt_at,
             backend=self.backend_name,
         )
@@ -367,6 +372,10 @@ class InMemoryTfIdfIndex(SearchIndex):
             return 0.25
         return 0.0
 
+    def _quality_boost(self, document: SearchDocument) -> float:
+        score = max(0.0, min(1.0, document.content_quality_score))
+        return (score - 0.5) * 0.25
+
 
 def _parse_iso_datetime(value: str) -> datetime | None:
     if not value:
@@ -456,16 +465,11 @@ class RedisSearchIndex(InMemoryTfIdfIndex):
         self._cleanup_empty_terms(old_terms)
 
     def stats(self) -> IndexStats:
-        terms_key = self._terms_key()
-        term_count = int(self.redis_client.scard(terms_key))
-        posting_count = 0
-        for term in self.redis_client.scan_iter(match=self._postings_key("*")):
-            posting_count += int(self.redis_client.zcard(term))
         redis_last_rebuilt = self.redis_client.hget(self._meta_key(), "last_rebuilt_at")
         return IndexStats(
             document_count=len(self.documents),
-            term_count=term_count,
-            posting_count=posting_count,
+            term_count=len(self.inverted),
+            posting_count=self.posting_count,
             last_rebuilt_at=redis_last_rebuilt or self.last_rebuilt_at,
             backend=self.backend_name,
         )
@@ -694,6 +698,7 @@ class MeiliSearchIndex(InMemoryTfIdfIndex):
                     tfidf_score=item.tfidf_score,
                     boost_score=item.boost_score + meili_tiebreaker,
                     final_score=item.final_score + meili_tiebreaker,
+                    quality_score=item.quality_score,
                 )
             )
         reranked.sort(key=lambda item: item.final_score, reverse=True)

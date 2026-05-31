@@ -13,7 +13,17 @@
 
   <main class="debug-layout">
     <section class="debug-main">
-      <p class="meta">数据源 · {{ configured_sources|length }} configured · {{ candidates|length }} candidates</p>
+      <p class="meta">数据源 · {{ configured_sources|length }} configured · {{ candidate_count }} shown · {{ total_candidates }} total · page {{ page }}/{{ page_count }}</p>
+      <nav class="debug-actions">
+        {% for item in status_filters %}
+          <a class="button-link{% if item.value == status %} is-active{% endif %}" href="{{ item.href }}">{{ item.label }}</a>
+        {% endfor %}
+      </nav>
+      <nav class="debug-actions">
+        {% for item in origin_filters %}
+          <a class="button-link{% if item.value == origin %} is-active{% endif %}" href="{{ item.href }}">{{ item.label }}</a>
+        {% endfor %}
+      </nav>
 
       <section class="debug-panel">
         <h2>Configured Sources</h2>
@@ -68,12 +78,28 @@
       <section class="debug-panel">
         <h2>Candidates</h2>
         {% if candidates %}
+          <form id="bulk-candidates-form" class="debug-actions" method="post">
+            <button type="submit" formaction="/sources/candidates/bulk-approve">批量启用</button>
+            <button type="submit" formaction="/sources/candidates/bulk-reject">批量拒绝</button>
+          </form>
+          <nav class="debug-actions">
+            {% if has_prev %}
+              <a class="button-link" href="{{ prev_href }}">上一页</a>
+            {% endif %}
+            <span class="meta">第 {{ page }} / {{ page_count }} 页，每页 {{ per_page }} 条</span>
+            {% if has_next %}
+              <a class="button-link" href="{{ next_href }}">下一页</a>
+            {% endif %}
+          </nav>
           <table class="debug-table">
             <thead>
               <tr>
+                <th>select</th>
                 <th>id</th>
                 <th>status</th>
                 <th>type</th>
+                <th>source</th>
+                <th>discovery</th>
                 <th>url</th>
                 <th>defaults</th>
                 <th>reason</th>
@@ -83,15 +109,23 @@
             <tbody>
               {% for candidate in candidates %}
                 <tr>
+                  <td>
+                    <input type="checkbox" name="candidate_ids" value="{{ candidate.id }}" form="bulk-candidates-form">
+                  </td>
                   <td>{{ candidate.id }}</td>
                   <td>{{ candidate.status }}</td>
                   <td>{{ candidate.source_type }}</td>
+                  <td>{{ candidate.display_name }}</td>
+                  <td>{{ candidate.discovery_label }}</td>
                   <td>{{ candidate.url }}</td>
                   <td>
-                    {% if candidate.config %}
-                      max={{ candidate.config.max_pages|default(50) }},
-                      category={{ candidate.config.category|default("news") }},
-                      score={{ candidate.config.source_score|default(0.7) }}
+                    {% if candidate.effective_config %}
+                      max={{ candidate.effective_config.max_pages|default(50) }},
+                      category={{ candidate.effective_config.category|default("news") }},
+                      score={{ candidate.effective_config.source_score|default(0.7) }}
+                      {% if candidate.effective_config.quality_profile %},
+                        quality={{ candidate.effective_config.quality_profile }}
+                      {% endif %}
                     {% else %}
                       max=50, category=news, score=0.7
                     {% endif %}
@@ -117,6 +151,15 @@
               {% endfor %}
             </tbody>
           </table>
+          <nav class="debug-actions">
+            {% if has_prev %}
+              <a class="button-link" href="{{ prev_href }}">上一页</a>
+            {% endif %}
+            <span class="meta">第 {{ page }} / {{ page_count }} 页</span>
+            {% if has_next %}
+              <a class="button-link" href="{{ next_href }}">下一页</a>
+            {% endif %}
+          </nav>
         {% else %}
           <p class="empty">暂无候选源。</p>
         {% endif %}

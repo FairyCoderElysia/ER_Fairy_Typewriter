@@ -64,9 +64,11 @@ def enrich_document(document: SearchDocument, terms: DomainTerms) -> SearchDocum
     """根据领域词典补全文档字段，不覆盖爬虫已经明确解析出的字段。"""
 
     enriched = replace(document, tags=list(document.tags), aliases=list(document.aliases))
-    haystack = " ".join([enriched.title, enriched.summary, enriched.content, *enriched.tags, *enriched.aliases]).lower()
+    searchable_fields = [enriched.title, enriched.summary, enriched.content, *enriched.tags, *enriched.aliases]
+    haystack = " ".join(searchable_fields).lower()
+    exact_terms = {value.lower() for value in [*enriched.tags, *enriched.aliases] if value}
     for entity in terms.entities:
-        if not _matches_entity(haystack, entity):
+        if not _matches_entity(haystack, entity, exact_terms):
             continue
 
         enriched.aliases = _merge_unique([*enriched.aliases, entity.canonical, *entity.aliases])
@@ -85,8 +87,19 @@ def enrich_documents(documents: list[SearchDocument], terms: DomainTerms) -> lis
     return [enrich_document(document, terms) for document in documents]
 
 
-def _matches_entity(haystack: str, entity: DomainEntity) -> bool:
-    return any(term and term.lower() in haystack for term in entity.lookup_terms)
+def _matches_entity(haystack: str, entity: DomainEntity, exact_terms: set[str] | None = None) -> bool:
+    exact_terms = exact_terms or set()
+    for term in entity.lookup_terms:
+        normalized = term.strip().lower()
+        if not normalized:
+            continue
+        if len(normalized) <= 1:
+            if normalized in exact_terms:
+                return True
+            continue
+        if normalized in haystack:
+            return True
+    return False
 
 
 def _merge_unique(values: list[str]) -> list[str]:

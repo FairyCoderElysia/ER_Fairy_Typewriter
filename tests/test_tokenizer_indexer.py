@@ -426,6 +426,65 @@ def test_stage4_source_score_is_only_a_light_bonus():
     assert results[0][0].id == 1
 
 
+def test_content_quality_is_light_bonus_for_similar_relevance():
+    docs = [
+        SearchDocument(
+            id=1,
+            url="local://daily",
+            title="原神 攻略",
+            content="原神攻略 配队。",
+            tags=["原神", "攻略"],
+            content_quality_score=0.2,
+            content_quality_labels=["daily-chat"],
+        ),
+        SearchDocument(
+            id=2,
+            url="local://guide",
+            title="原神 攻略",
+            content="原神攻略 配队。",
+            tags=["原神", "攻略"],
+            content_quality_score=0.9,
+            content_quality_labels=["guide"],
+        ),
+    ]
+    index = InMemoryTfIdfIndex()
+    index.rebuild(docs)
+
+    results, _ = index.search("原神 攻略")
+    explanation = index.explain("原神 攻略")
+
+    assert results[0][0].id == 2
+    assert explanation.results[0].quality_score > explanation.results[1].quality_score
+
+
+def test_content_quality_does_not_beat_much_higher_relevance():
+    docs = [
+        SearchDocument(
+            id=1,
+            url="local://relevant",
+            title="原神 雷电将军攻略",
+            content="雷电将军圣遗物配队。",
+            tags=["原神", "攻略"],
+            content_quality_score=0.5,
+        ),
+        SearchDocument(
+            id=2,
+            url="local://quality",
+            title="原神 高质量资料",
+            content="这是官方精选资料。",
+            tags=["原神"],
+            content_quality_score=1.0,
+            content_quality_labels=["official", "good"],
+        ),
+    ]
+    index = InMemoryTfIdfIndex()
+    index.rebuild(docs)
+
+    results, _ = index.search("雷电将军攻略")
+
+    assert results[0][0].id == 1
+
+
 def test_stage5_news_freshness_prefers_recent_news_for_news_intent():
     docs = [
         SearchDocument(
@@ -844,6 +903,61 @@ def test_sqlite_store_upserts_by_url(tmp_path):
     assert first.id == second.id
     assert store.count() == 1
     assert store.get(second.id).title == "新标题"
+
+
+def test_sqlite_store_persists_content_quality_metadata(tmp_path):
+    store = SQLiteDocumentStore(tmp_path / "test.sqlite3")
+    saved = store.upsert(
+        SearchDocument(
+            url="local://quality",
+            title="角色攻略",
+            content="养成配队",
+            content_quality_score=0.82,
+            content_quality_labels=["guide", "character-build"],
+        )
+    )
+
+    loaded = store.get(saved.id)
+
+    assert loaded.content_quality_score == 0.82
+    assert loaded.content_quality_labels == ["guide", "character-build"]
+
+
+def test_sqlite_store_migrates_content_quality_defaults(tmp_path):
+    db_path = tmp_path / "legacy.sqlite3"
+    import sqlite3
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE documents (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                url TEXT NOT NULL UNIQUE,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                summary TEXT NOT NULL DEFAULT '',
+                tags TEXT NOT NULL DEFAULT '[]',
+                aliases TEXT NOT NULL DEFAULT '[]',
+                entity_type TEXT NOT NULL DEFAULT '',
+                game_title TEXT NOT NULL DEFAULT '',
+                character_name TEXT NOT NULL DEFAULT '',
+                source_score REAL NOT NULL DEFAULT 0.0,
+                content_hash TEXT NOT NULL DEFAULT '',
+                category TEXT NOT NULL DEFAULT 'anime',
+                source TEXT NOT NULL DEFAULT '',
+                published_at TEXT NOT NULL DEFAULT '',
+                crawled_at TEXT NOT NULL,
+                image_url TEXT NOT NULL DEFAULT ''
+            )
+            """
+        )
+
+    store = SQLiteDocumentStore(db_path)
+    saved = store.upsert(SearchDocument(url="local://legacy", title="旧数据", content="正文"))
+    loaded = store.get(saved.id)
+
+    assert loaded.content_quality_score == 0.5
+    assert loaded.content_quality_labels == []
 
 
 def test_sqlite_store_deletes_document_by_id(tmp_path):

@@ -77,6 +77,8 @@
     "source_score": 0.95,
     "scheduler_interval_minutes": 60,
     "parse_strategy": "miyoushe-feed",
+    "quality_profile": "miyoushe-community",
+    "quality_mode": "score",
     "notes": "米哈游官方社区帖子流。通过公开帖子列表接口抓取多篇帖子，避免只保存 SPA 入口壳。"
   },
   {
@@ -93,6 +95,8 @@
     "source_score": 0.95,
     "scheduler_interval_minutes": 60,
     "parse_strategy": "miyoushe-feed",
+    "quality_profile": "miyoushe-community",
+    "quality_mode": "score",
     "notes": "米哈游官方社区帖子流。通过公开帖子列表接口抓取多篇帖子，避免只保存 SPA 入口壳。"
   },
   {
@@ -109,6 +113,8 @@
     "source_score": 0.95,
     "scheduler_interval_minutes": 60,
     "parse_strategy": "miyoushe-feed",
+    "quality_profile": "miyoushe-community",
+    "quality_mode": "score",
     "notes": "米哈游官方社区帖子流。通过公开帖子列表接口抓取多篇帖子，避免只保存 SPA 入口壳。"
   }
 ]

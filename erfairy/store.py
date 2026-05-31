@@ -46,6 +46,8 @@ class SQLiteDocumentStore:
                     game_title TEXT NOT NULL DEFAULT '',
                     character_name TEXT NOT NULL DEFAULT '',
                     source_score REAL NOT NULL DEFAULT 0.0,
+                    content_quality_score REAL NOT NULL DEFAULT 0.5,
+                    content_quality_labels TEXT NOT NULL DEFAULT '[]',
                     content_hash TEXT NOT NULL DEFAULT '',
                     category TEXT NOT NULL DEFAULT 'anime',
                     source TEXT NOT NULL DEFAULT '',
@@ -114,6 +116,8 @@ class SQLiteDocumentStore:
             "game_title": "TEXT NOT NULL DEFAULT ''",
             "character_name": "TEXT NOT NULL DEFAULT ''",
             "source_score": "REAL NOT NULL DEFAULT 0.0",
+            "content_quality_score": "REAL NOT NULL DEFAULT 0.5",
+            "content_quality_labels": "TEXT NOT NULL DEFAULT '[]'",
             "content_hash": "TEXT NOT NULL DEFAULT ''",
         }
         for name, ddl in column_defs.items():
@@ -128,6 +132,7 @@ class SQLiteDocumentStore:
     def upsert(self, document: SearchDocument) -> SearchDocument:
         tags_json = json.dumps(document.tags, ensure_ascii=False)
         aliases_json = json.dumps(document.aliases, ensure_ascii=False)
+        quality_labels_json = json.dumps(document.content_quality_labels, ensure_ascii=False)
         with self.connect() as conn:
             existing = self._find_existing_document(conn, document)
             upsert_url = existing["url"] if existing else document.url
@@ -135,10 +140,11 @@ class SQLiteDocumentStore:
                 """
                 INSERT INTO documents (
                     url, title, content, summary, tags, aliases, entity_type,
-                    game_title, character_name, source_score, content_hash, category, source,
-                    published_at, crawled_at, image_url
+                    game_title, character_name, source_score, content_quality_score,
+                    content_quality_labels, content_hash, category, source, published_at,
+                    crawled_at, image_url
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(url) DO UPDATE SET
                     title=excluded.title,
                     content=excluded.content,
@@ -149,6 +155,8 @@ class SQLiteDocumentStore:
                     game_title=excluded.game_title,
                     character_name=excluded.character_name,
                     source_score=excluded.source_score,
+                    content_quality_score=excluded.content_quality_score,
+                    content_quality_labels=excluded.content_quality_labels,
                     content_hash=excluded.content_hash,
                     category=excluded.category,
                     source=excluded.source,
@@ -167,6 +175,8 @@ class SQLiteDocumentStore:
                     document.game_title,
                     document.character_name,
                     document.source_score,
+                    document.content_quality_score,
+                    quality_labels_json,
                     document.content_hash,
                     document.category,
                     document.source,
@@ -407,6 +417,49 @@ class SQLiteDocumentStore:
                 ).fetchall()
         return [self._row_to_source_candidate(row) for row in rows]
 
+    def source_candidates_page(
+        self,
+        status: str | None = None,
+        origin: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict]:
+        candidates = self._filtered_source_candidates(status=status, origin=origin)
+        return candidates[offset : offset + limit]
+
+    def count_source_candidates(self, status: str | None = None, origin: str | None = None) -> int:
+        return len(self._filtered_source_candidates(status=status, origin=origin))
+
+    def _filtered_source_candidates(self, status: str | None = None, origin: str | None = None) -> list[dict]:
+        with self.connect() as conn:
+            if status and status != "all":
+                rows = conn.execute(
+                    """
+                    SELECT * FROM source_candidates
+                    WHERE status = ?
+                    ORDER BY id DESC
+                    """,
+                    (status,),
+                ).fetchall()
+            else:
+                rows = conn.execute("SELECT * FROM source_candidates ORDER BY id DESC").fetchall()
+        candidates = [self._row_to_source_candidate(row) for row in rows]
+        if origin and origin != "all":
+            candidates = [candidate for candidate in candidates if self._source_candidate_origin(candidate) == origin]
+        return candidates
+
+    def _source_candidate_origin(self, candidate: dict) -> str:
+        config = candidate.get("config") or {}
+        origin = str(config.get("discovery_origin") or "")
+        if origin:
+            return origin
+        reason = str(candidate.get("reason") or "")
+        if "首页解析" in reason:
+            return "index-page"
+        if "RSS" in reason or "Sitemap" in reason or candidate.get("source_type") in {"rss-feed", "sitemap-feed", "html-list-feed"}:
+            return "generic-feed"
+        return "legacy"
+
     def get_source_candidate(self, candidate_id: int) -> dict | None:
         with self.connect() as conn:
             row = conn.execute("SELECT * FROM source_candidates WHERE id = ?", (candidate_id,)).fetchone()
@@ -469,6 +522,8 @@ class SQLiteDocumentStore:
             game_title=row["game_title"],
             character_name=row["character_name"],
             source_score=float(row["source_score"] or 0.0),
+            content_quality_score=float(row["content_quality_score"] if row["content_quality_score"] is not None else 0.5),
+            content_quality_labels=json.loads(row["content_quality_labels"] or "[]"),
             content_hash=row["content_hash"],
             category=row["category"],
             source=row["source"],

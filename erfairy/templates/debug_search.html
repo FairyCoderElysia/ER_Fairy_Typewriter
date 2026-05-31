@@ -84,10 +84,21 @@
                 <dd>{{ '%.6f'|format(item.tfidf_score) }}</dd>
                 <dt>boost</dt>
                 <dd>{{ '%.6f'|format(item.boost_score) }}</dd>
+                <dt>quality</dt>
+                <dd>{{ '%.6f'|format(item.quality_score) }}</dd>
                 <dt>final</dt>
                 <dd>{{ '%.6f'|format(item.final_score) }}</dd>
               </dl>
             </div>
+            <p class="meta">
+              quality_score: {{ '%.3f'|format(item.document.content_quality_score) }}
+              {% if item.document.content_quality_labels %}
+                · labels:
+                {% for label in item.document.content_quality_labels %}
+                  <span class="inline-tag">{{ label }}</span>
+                {% endfor %}
+              {% endif %}
+            </p>
 
             {% if item.field_matches %}
               <table class="debug-table">

@@ -28,6 +28,10 @@ class SourceConfig:
     delay_seconds: float = 1.0
     source_score: float = 0.0
     parse_strategy: str = "default"
+    quality_profile: str = ""
+    quality_mode: str = "score"
+    wiki_game_title: str = ""
+    wiki_game_aliases: list[str] = field(default_factory=list)
     notes: str = ""
     scheduler_interval_minutes: int = 0
 
@@ -44,6 +48,10 @@ class SourceConfig:
             delay_seconds=float(data.get("delay_seconds", 1.0)),
             source_score=float(data.get("source_score", 0.0)),
             parse_strategy=str(data.get("parse_strategy", "default")),
+            quality_profile=str(data.get("quality_profile", "")),
+            quality_mode=str(data.get("quality_mode", "score")),
+            wiki_game_title=str(data.get("wiki_game_title", "")),
+            wiki_game_aliases=[str(alias) for alias in data.get("wiki_game_aliases", [])],
             notes=str(data.get("notes", "")),
             scheduler_interval_minutes=int(data.get("scheduler_interval_minutes", 0)),
         )

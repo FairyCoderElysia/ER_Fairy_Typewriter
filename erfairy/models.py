@@ -61,6 +61,8 @@ class SearchDocument:
         game_title: 所属游戏或作品名，帮助角色和作品建立关联。
         character_name: 角色正式名，适合做角色搜索的精确命中加权。
         source_score: 来源质量分，目前作为排序中的轻微加分。
+        content_quality_score: 单篇内容质量分，用于让官方、攻略、精品等社区内容轻微前移。
+        content_quality_labels: 单篇内容质量标签，例如 official、guide、daily-chat。
         content_hash: 正文内容指纹，用于发现同内容不同 URL 的重复文档。
         category: 内容分类，首版默认 anime，也可以扩展 game、character、news。
         source: 来源站点或数据来源名称。
@@ -84,6 +86,8 @@ class SearchDocument:
     game_title: str = ""
     character_name: str = ""
     source_score: float = 0.0
+    content_quality_score: float = 0.5
+    content_quality_labels: list[str] = field(default_factory=list)
     content_hash: str = ""
     category: str = "anime"
     source: str = ""
@@ -116,6 +120,8 @@ class SearchDocument:
             "game_title": self.game_title,
             "character_name": self.character_name,
             "source_score": self.source_score,
+            "content_quality_score": self.content_quality_score,
+            "content_quality_labels": self.content_quality_labels,
             "content_hash": self.content_hash,
             "category": self.category,
             "source": self.source,
@@ -196,6 +202,7 @@ class DocumentScoreExplanation:
     tfidf_score: float  # 余弦归一化后的 TF-IDF 分数。
     boost_score: float  # 标题/标签/摘要完整命中的额外加分。
     final_score: float  # 最终排序分数。
+    quality_score: float = 0.0  # 内容质量带来的轻量加分。
 
     def as_dict(self) -> dict[str, Any]:
         """转成 `/debug/search` 可直接返回的字典。"""
@@ -212,12 +219,15 @@ class DocumentScoreExplanation:
                 "game_title": self.document.game_title,
                 "character_name": self.document.character_name,
                 "source_score": self.document.source_score,
+                "content_quality_score": self.document.content_quality_score,
+                "content_quality_labels": self.document.content_quality_labels,
                 "category": self.document.category,
                 "source": self.document.source,
             },
             "field_matches": [match.as_dict() for match in self.field_matches],
             "tfidf_score": round(self.tfidf_score, 6),
             "boost_score": round(self.boost_score, 6),
+            "quality_score": round(self.quality_score, 6),
             "final_score": round(self.final_score, 6),
         }
 

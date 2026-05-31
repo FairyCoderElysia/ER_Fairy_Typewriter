@@ -397,7 +397,8 @@ mark { /* 命中关键词高亮。 */
   margin: 0;
 }
 
-.debug-actions button {
+.debug-actions button,
+.debug-actions .button-link {
   min-height: 30px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -405,10 +406,16 @@ mark { /* 命中关键词高亮。 */
   color: var(--accent-dark);
   background: #fff;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
 }
 
 .debug-actions button:hover,
-.debug-actions button:focus {
+.debug-actions button:focus,
+.debug-actions .button-link:hover,
+.debug-actions .button-link:focus,
+.debug-actions .button-link.is-active {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(217, 72, 143, 0.1);
 }
@@ -526,6 +533,17 @@ mark { /* 命中关键词高亮。 */
   border-radius: 999px;
   padding: 6px 10px;
   font-size: 13px;
+}
+
+.inline-tag {
+  display: inline-block;
+  color: var(--accent-dark);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 7px;
+  margin: 2px 3px 2px 0;
+  font-size: 12px;
+  background: #fff;
 }
 
 .debug-result-head {

@@ -44,6 +44,8 @@ def test_miyoushe_source_config_uses_site_specific_strategy():
     assert source.max_pages == 20
     assert source.parse_strategy == "miyoushe-feed"
     assert source.source_score == 0.95
+    assert source.quality_profile == "miyoushe-community"
+    assert source.quality_mode == "score"
     assert source.scheduler_interval_minutes == 60
 
 

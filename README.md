@@ -16,17 +16,18 @@
 - 索引抽象：`SearchIndex` 定义统一接口，便于后续对照 Redis 或专业搜索引擎后端。
 - 索引后端切换：默认使用内存 TF-IDF，也可用 `ERFAIRY_INDEX_BACKEND=redis-zset` 切到 Redis ZSet 风格教学后端，或用 `ERFAIRY_INDEX_BACKEND=redis` 接入真实 Redis ZSet postings。
 - Web 搜索：FastAPI API + 简洁搜索网页。
-- 可解释搜索：`/debug/search` 展示分词、字段命中、TF-IDF、boost 和最终分数。
+- 可解释搜索：`/debug/search` 展示分词、字段命中、TF-IDF、boost、内容质量加分和最终分数。
 - 索引状态：`/debug/index` 展示文档数、token 数、倒排项数量和最近重建时间。
 - 搜索评测：使用 `tests/fixtures/search_eval.json` 验证 Top1、Top3 和零结果率。
-- 二次元垂直化：已接入 `aliases`、`entity_type`、`game_title`、`character_name`、`source_score` 等字段。
+- 二次元垂直化：已接入 `aliases`、`entity_type`、`game_title`、`character_name`、`source_score`、`content_quality_score` 和 `content_quality_labels` 等字段。
 - 设计系统：`docs/design-system.md` 约束后续页面和调试界面风格。
 - 别名词典：`aliases.example.json` 记录角色、作品和资讯意图词，`erfairy/domain_terms.py` 会在样例入库和爬虫保存前补全文档字段。
 - 受控数据源：`sources.example.json` 提供本地 fixture、公开新闻源、米游社源和国内二次元/二游候选源配置示例，并能配置 `source_score`、`max_pages` 和 `scheduler_interval_minutes`。
 - 文章流适配：MyAnimeList、Anime News Network、FGO 官方新闻会从列表页抽取多篇文章并抓取详情页。
-- 站点专用适配：米游社、GameKee、TapTap 已有专用抓取器；萌娘百科和 Bangumi 使用 API 型抓取器。
+- 站点专用适配：米游社、GameKee、TapTap 已有专用抓取器；萌娘百科和 Bangumi 使用 API 型抓取器。米游社会合并最新/精品/热门流，TapTap 会给攻略、活动、论坛等页面打内容质量标签。
 - 持续采集：支持 `/crawl/all` 批量抓取、`/sources/discover` 候选源发现、候选源试抓/审核/启用并立即抓取，以及默认关闭的轻量自动调度器。
 - 新闻新鲜度：资讯意图查询会给近期新闻轻量加分，不替代 TF-IDF 和字段相关性。
+- 社区内容质量：社区帖不会被粗暴丢弃，而是用 `content_quality_score` / `content_quality_labels` 让官方、热门、精品、攻略、养成、活动内容前移，让日常水帖自然后沉。
 
 ## 安装
 
@@ -135,7 +136,7 @@ Content-Type: application/json
 }
 ```
 
-可用 ID 还包括 `miyoushe-bh3` 和 `miyoushe-sr`。米游社页面是前端应用，当前不再只保存入口壳，而是通过帖子列表接口生成多篇 `news` 文档。
+可用 ID 还包括 `miyoushe-bh3` 和 `miyoushe-sr`。米游社页面是前端应用，当前不再只保存入口壳，而是通过帖子列表接口生成多篇 `news` 文档。抓取时会同时尝试最新、精品和热门帖子流，合并去重后按内容质量分和发布时间截取 `max_pages`；日常帖仍可入库，但会带有 `daily-chat` 等标签并在排序中轻微后沉。
 
 返回内容会包含 `run_id`、`saved`、`errors`、`error_details`、`index_update`、`indexed` 和 `total_documents`。其中 `errors` 表示本次抓取中被域名限制、robots 拒绝、下载失败或解析失败的页面数量，详细记录会写入 SQLite。`index_update=incremental` 表示本次抓取保存的文档已增量写入当前索引，不再每次抓取后全量 rebuild；如果你怀疑索引状态异常，仍可手动调用 `/reindex` 做全量重建兜底。
 
@@ -196,6 +197,7 @@ uvicorn erfairy.web:app --reload
 ### 学习现阶段重点
 
 - 看 `source_score` 如何作为来源质量的轻微加分参与排序。
+- 看 `content_quality_score` 如何作为单篇内容价值的轻微加分参与排序，和 `source_score` 保持分工。
 - 看 `aliases` 如何帮助别名、中英混合查询召回结果。
 - 看 `erfairy/domain_terms.py` 如何把 `aliases.example.json` 里的词典补进样例和抓取文档。
 - 看新闻意图查询下 `published_at` / `crawled_at` 如何产生轻量新鲜度加分。
@@ -209,7 +211,7 @@ uvicorn erfairy.web:app --reload
 GET /debug/search?q=原神&category=anime
 ```
 
-浏览器访问时会返回 HTML 调试页，把查询分词、未命中 token、候选文档、字段命中、TF-IDF 分数、boost 分数和最终分数分区展示。脚本调用时可以请求 JSON：
+浏览器访问时会返回 HTML 调试页，把查询分词、未命中 token、候选文档、字段命中、TF-IDF 分数、boost 分数、内容质量加分和最终分数分区展示。脚本调用时可以请求 JSON：
 
 ```powershell
 Invoke-RestMethod "http://127.0.0.1:8000/debug/search?q=原神&category=anime" -Headers @{Accept="application/json"}
@@ -268,6 +270,14 @@ GET /debug/index
 
 如果返回里的 `backend` 是 `meilisearch`，说明当前搜索先由 Meilisearch 召回候选，再由项目自研的字段权重、别名、垂直 boost 和新鲜度规则做二次排序。Python 进程仍保留文档对象，用于摘要、高亮、调试输出、本地统计和二次排序。`/crawl` 会把新增/更新文档增量同步到 Meilisearch，`DELETE /documents/{doc_id}` 会同步删除 Meilisearch 中的文档。
 
+??????????????????????????????? rebuild ???`/debug/index` ? `index_build` ????? `ready`?`running`?`last_started_at`?`last_finished_at`?`last_error` ? SQLite ??????????????????????????`/search` ? `/debug/search` ??????? 30 ???????????????????
+
+```powershell
+$env:ERFAIRY_INDEX_READY_WAIT_SECONDS="5"
+```
+
+??? `0` ????????????????????????????
+
 查看 Redis 里的索引结构：
 
 ```http
@@ -311,7 +321,7 @@ Content-Type: application/json
 }
 ```
 
-米游社、萌娘百科、Bangumi、TapTap、GameKee 这类不一定有普通 RSS 的站点也可以走同一个入口。发现器会先匹配已注册的站点 Profile，再回退到 RSS/Sitemap/HTML 列表页发现：
+米游社、萌娘百科、Bangumi、TapTap、GameKee、Biligame Wiki 这类不一定有普通 RSS 的站点也可以走同一个入口。发现器会先匹配已注册的站点 Profile，再回退到 RSS/Sitemap/HTML 列表页发现：
 
 ```powershell
 Invoke-RestMethod -Method Post `
@@ -327,7 +337,8 @@ Invoke-RestMethod -Method Post `
 - `https://zh.moegirl.org.cn/`：生成 `moegirl-api` 候选源，走萌娘百科 MediaWiki API。
 - `https://bangumi.tv/`：生成 `bangumi-api` 候选源，走 Bangumi 番组计划公开 API。
 - `https://www.taptap.cn/app/168332`：生成 `taptap-feed` 候选源，抓取 TapTap 具体游戏页、介绍、攻略、论坛和活动页。根站 `https://www.taptap.cn/` 会先回退到原神游戏页候选。
-- `https://www.gamekee.com/ba`：生成 `gamekee-feed` 候选源，走 GameKee wiki 公开接口。根站 `https://www.gamekee.com/` 会展开蔚蓝档案、原神攻略、NIKKE、崩坏3 四个常用 wiki 候选。
+- `https://www.gamekee.com/ba`：生成 `gamekee-feed` 候选源，走 GameKee wiki 公开接口。根站 `https://www.gamekee.com/` 会先给出常用内置推荐，再从首页热门/推荐区域解析最多 30 个游戏 Wiki 分区候选。
+- `https://wiki.biligame.com/ys`：生成 `biligame-wiki` 候选源，走 Biligame MediaWiki API。根站 `https://wiki.biligame.com/` 会先给出常用内置推荐，再从首页热门/推荐区域解析最多 30 个游戏 Wiki 分区候选。
 
 审核候选源：
 
@@ -338,18 +349,20 @@ POST /sources/candidates/{id}/test-crawl
 POST /sources/candidates/{id}/reject
 ```
 
-`test-crawl` 只试抓候选源，不入库、不改变状态；脚本调用默认返回 JSON，包含 `would_save`、`errors` 和前 5 篇 `preview_documents`。从 `/debug/sources` 页面点击“试抓”时会返回可读的预览页，方便启用前检查标题、URL、来源和分类。`approve?crawl=true` 会在审核通过后立即正式抓取一遍，并把保存的文档增量写入当前索引。审核通过的候选源会生成 `candidate-{id}` 形式的 `source_id`。普通 RSS/Sitemap/List 候选默认按 `news` 分类，最多抓 50 篇详情页，`max_depth=0`，`delay_seconds=1.0`；站点 Profile 可以覆盖默认值，例如米游社候选使用 `category=anime`、`max_pages=20`、`source_score=0.95`，萌娘百科候选使用 `moegirl-api`，Bangumi 候选使用 `bangumi-api`。
+`test-crawl` 只试抓候选源，不入库、不改变状态；脚本调用默认返回 JSON，包含 `would_save`、`preview_count`、`errors` 和本次试抓得到的 `preview_documents`。从 `/debug/sources` 页面点击“试抓”时会返回可读的预览页，方便启用前检查标题、URL、来源、分类、内容质量分和质量标签。`approve?crawl=true` 会在审核通过后立即正式抓取一遍，并把保存的文档增量写入当前索引；返回的 `candidate.effective_config` 和 `crawl_result.max_pages` 会展示实际执行配置。审核通过的候选源会生成 `candidate-{id}` 形式的 `source_id`。候选源会在 `config_json` 中记录 `discovery_origin` 和中文 `discovery_label`，例如 `内置推荐源`、`首页解析发现`、`通用 RSS/Sitemap 发现`；`/debug/sources` 可以按这些来源筛选，每页显示 50 条候选源，并支持勾选当前页的多条候选源批量启用或批量拒绝。普通 RSS/Sitemap/List 候选默认按 `news` 分类，最多抓 50 篇详情页，`max_depth=0`，`delay_seconds=1.0`；站点 Profile 可以覆盖默认值，例如米游社候选使用 `category=anime`、`max_pages=20`、`source_score=0.95`、`quality_profile=miyoushe-community`，TapTap 候选使用 `quality_profile=taptap-community`，萌娘百科候选使用 `moegirl-api`，Bangumi 候选使用 `bangumi-api`，Biligame Wiki 候选使用 `biligame-wiki`。
+
+Wiki 类候选源会额外写入 `wiki_game_title` 和 `wiki_game_aliases`。GameKee/Biligame Wiki 抓取出的文档会把站点名、`Wiki`、分区 alias、规范游戏名、别名和页面分类一起写入 `tags`，并把规范游戏名写入 `game_title`。例如 `bh3` 会同时带有 `崩坏3`、`崩坏三`，`sr` 会同时带有 `崩坏：星穹铁道`、`星穹铁道`、`崩铁`，这样搜索中文游戏名时不会只因为 tags 里只有缩写而漏召回。旧文档不会自动改写，重新抓取对应候选源后会逐步覆盖为新字段。
 
 自动定时抓取默认关闭。需要启用时设置：
 
 ```powershell
 $env:ERFAIRY_CRAWL_SCHEDULER="1"
 $env:ERFAIRY_CRAWL_INTERVAL_MINUTES="60"
-$env:ERFAIRY_CRAWL_SOURCE_IDS="mal-news,ann-home"
+$env:ERFAIRY_CRAWL_SOURCE_IDS="all"
 uvicorn erfairy.web:app --reload
 ```
 
-调度器默认每分钟醒一次，检查哪些数据源已经到达自己的下次抓取时间。全局默认间隔是 60 分钟；如果某个 source 或候选源配置了 `scheduler_interval_minutes`，则优先使用该源自己的间隔。
+调度器默认每分钟醒一次，检查哪些数据源已经到达自己的下次抓取时间。全局默认间隔是 60 分钟；如果某个 source 或候选源配置了 `scheduler_interval_minutes`，则优先使用该源自己的间隔。`ERFAIRY_CRAWL_SOURCE_IDS` 可以留空或设置为 `all` 表示抓取全部已配置/已审核源；也可以写成 `mal-news,ann-home` 只抓指定源。
 
 调试页面：
 
@@ -358,9 +371,11 @@ GET /debug/sources
 GET /debug/crawl-scheduler
 ```
 
+`/debug/sources` 支持 `status`、`origin` 和 `page` 查询参数，例如 `/debug/sources?status=pending&origin=index-page&page=2`。页面固定每页 50 条，上一页/下一页只改变当前筛选条件下的页码；批量启用/拒绝只作用于当前页被勾选的候选源。
+
 `/debug/crawl-scheduler` 会展示全局调度状态，也会列出每个源的 `interval_minutes`、`last_run_at`、`next_run_at` 和最近一次结果。
 
-新增通用采集策略：`rss-feed`、`sitemap-feed`、`html-list-feed`。它们会先从 RSS、Sitemap 或 HTML 列表页抽取详情页 URL，再复用现有 `AnimePageParser` 把详情页转成搜索文档。站点专用采集策略目前包括 `miyoushe-feed`、`moegirl-api`、`bangumi-api`、`gamekee-feed` 和 `taptap-feed`，由发现 Profile 自动写入候选源配置，后续新增非 RSS 站点时也按这个 Profile 机制扩展。
+新增通用采集策略：`rss-feed`、`sitemap-feed`、`html-list-feed`。它们会先从 RSS、Sitemap 或 HTML 列表页抽取详情页 URL，再复用现有 `AnimePageParser` 把详情页转成搜索文档。站点专用采集策略目前包括 `miyoushe-feed`、`moegirl-api`、`bangumi-api`、`gamekee-feed`、`taptap-feed` 和 `biligame-wiki`，由发现 Profile 自动写入候选源配置，后续新增非 RSS 站点时也按这个 Profile 机制扩展。
 
 ## 测试
 
@@ -375,7 +390,7 @@ python -m pytest tests/test_search_eval.py
 ```
 
 当前测试覆盖普通搜索 JSON、浏览器结果页、调试搜索、索引状态、分词、排序、SearchIndex 接口、SQLite upsert、HTML 解析、开发写入接口开关、本地 HTML fixture 抓取、公开站点配置加载、抓取错误记录、meta 垂直字段解析、content hash 去重和标题相似度去重。
-阶段 6/7 额外覆盖可切换索引后端、Redis ZSet 风格倒排结构、真实 Redis debug snapshot、完整增量索引更新、Meilisearch 专业后端、后端契约测试、候选源发现/试抓/审核、`/crawl/all`、自动调度器、GameKee/TapTap 专用抓取器和国内站点 Profile。最近一次全量回归为 `107 passed`。
+阶段 6/7 额外覆盖可切换索引后端、Redis ZSet 风格倒排结构、真实 Redis debug snapshot、完整增量索引更新、Meilisearch 专业后端、后端契约测试、候选源发现/试抓/审核、`/crawl/all`、自动调度器、GameKee/TapTap 专用抓取器、社区内容质量评分和国内站点 Profile。
 
 ## 学习路线
 

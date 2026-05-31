@@ -165,6 +165,9 @@ def test_debug_search_explains_scores():
     assert payload["candidate_count"] >= 1
     first = payload["results"][0]
     assert first["document"]["title"]
+    assert "content_quality_score" in first["document"]
+    assert "content_quality_labels" in first["document"]
+    assert "quality_score" in first
     assert first["field_matches"]
     assert first["final_score"] >= first["tfidf_score"]
 
@@ -203,6 +206,8 @@ def test_debug_index_returns_index_stats():
     assert payload["term_count"] >= 1
     assert payload["posting_count"] >= payload["term_count"]
     assert payload["backend"] == "memory"
+    assert payload["index_build"]["sqlite_document_count"] >= payload["document_count"]
+    assert "ready" in payload["index_build"]
 
 
 def test_debug_redis_returns_guidance_when_backend_is_not_redis():
@@ -336,25 +341,23 @@ def test_sources_discover_writes_pending_candidates(monkeypatch):
 
 def test_debug_sources_returns_configured_and_candidate_sources(monkeypatch):
     import erfairy.web as web_module
+    candidates = [
+        {
+            "id": 1,
+            "url": "https://www.miyoushe.com/ys/",
+            "source_type": "miyoushe-feed",
+            "title": "Miyoushe",
+            "status": "pending",
+            "reason": "Known Miyoushe community profile",
+            "config": {"max_pages": 5, "category": "anime", "source_score": 0.95},
+            "config_json": '{"max_pages": 5, "category": "anime", "source_score": 0.95}',
+            "discovered_at": "2026-05-30T00:00:00+00:00",
+            "approved_at": "",
+        }
+    ]
 
-    monkeypatch.setattr(
-        web_module.store,
-        "source_candidates",
-        lambda status=None, limit=100: [
-            {
-                "id": 1,
-                "url": "https://example.com/feed.xml",
-                "source_type": "rss-feed",
-                "title": "Feed",
-                "status": "pending",
-                "reason": "RSS",
-                "config": {"max_pages": 12, "category": "news", "source_score": 0.7},
-                "config_json": '{"max_pages": 12, "category": "news", "source_score": 0.7}',
-                "discovered_at": "2026-05-30T00:00:00+00:00",
-                "approved_at": "",
-            }
-        ],
-    )
+    monkeypatch.setattr(web_module.store, "source_candidates_page", lambda **kwargs: candidates)
+    monkeypatch.setattr(web_module.store, "count_source_candidates", lambda **kwargs: len(candidates))
 
     with TestClient(web_module.app) as client:
         response = client.get("/debug/sources", headers={"accept": "application/json"})
@@ -363,11 +366,181 @@ def test_debug_sources_returns_configured_and_candidate_sources(monkeypatch):
     payload = response.json()
     assert payload["configured_sources"]
     assert "candidates" in payload
+    assert payload["candidates"][0]["effective_config"]["max_pages"] == 20
+    assert payload["candidates"][0]["effective_config"]["quality_profile"] == "miyoushe-community"
 
     html_response = client.get("/debug/sources")
     assert html_response.status_code == 200
     assert "/sources/candidates/1/test-crawl" in html_response.text
     assert "/sources/candidates/1/approve?crawl=true" in html_response.text
+    assert "max=20" in html_response.text
+    assert "miyoushe-community" in html_response.text
+
+
+def test_debug_sources_filters_by_status_and_origin(monkeypatch):
+    import erfairy.web as web_module
+
+    candidates = [
+        {
+            "id": 1,
+            "url": "https://wiki.biligame.com/arknights",
+            "source_type": "biligame-wiki",
+            "title": "Biligame Arknights",
+            "status": "pending",
+            "reason": "从 Biligame Wiki 首页解析发现",
+            "config": {"discovery_origin": "index-page", "discovery_label": "首页解析发现"},
+            "config_json": "{}",
+            "discovered_at": "2026-05-30T00:00:00+00:00",
+            "approved_at": "",
+        },
+        {
+            "id": 2,
+            "url": "https://wiki.biligame.com/ys",
+            "source_type": "biligame-wiki",
+            "title": "Biligame Ys",
+            "status": "approved",
+            "reason": "内置推荐的站点 Profile",
+            "config": {"discovery_origin": "known-profile", "discovery_label": "内置推荐源"},
+            "config_json": "{}",
+            "discovered_at": "2026-05-30T00:00:00+00:00",
+            "approved_at": "2026-05-30T00:00:01+00:00",
+        },
+    ]
+    def filtered_candidates_page(status=None, origin=None, limit=50, offset=0):
+        filtered = [
+            candidate
+            for candidate in candidates
+            if (not status or status == "all" or candidate["status"] == status)
+            and (not origin or origin == "all" or candidate["config"].get("discovery_origin") == origin)
+        ]
+        return filtered[offset : offset + limit]
+
+    def count_filtered_candidates(status=None, origin=None):
+        return len(filtered_candidates_page(status=status, origin=origin, limit=100, offset=0))
+
+    monkeypatch.setattr(web_module.store, "source_candidates_page", filtered_candidates_page)
+    monkeypatch.setattr(web_module.store, "count_source_candidates", count_filtered_candidates)
+
+    with TestClient(web_module.app) as client:
+        response = client.get(
+            "/debug/sources",
+            params={"status": "pending", "origin": "index-page"},
+            headers={"accept": "application/json"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["candidate_count"] == 1
+    assert payload["total_candidates"] == 1
+    assert payload["candidates"][0]["id"] == 1
+    assert payload["candidates"][0]["discovery_label"] == "首页解析发现"
+    assert payload["candidates"][0]["display_name"] == "biligame-wiki Arknights页面"
+
+
+def test_debug_sources_paginates_candidates(monkeypatch):
+    import erfairy.web as web_module
+
+    candidates = [
+        {
+            "id": index,
+            "url": f"https://wiki.biligame.com/wiki{index}",
+            "source_type": "biligame-wiki",
+            "title": f"Wiki {index}",
+            "status": "pending",
+            "reason": "从 Biligame Wiki 首页解析发现",
+            "config": {"discovery_origin": "index-page", "discovery_label": "首页解析发现"},
+            "config_json": "{}",
+            "discovered_at": "2026-05-30T00:00:00+00:00",
+            "approved_at": "",
+        }
+        for index in range(1, 61)
+    ]
+
+    monkeypatch.setattr(
+        web_module.store,
+        "source_candidates_page",
+        lambda status=None, origin=None, limit=50, offset=0: candidates[offset : offset + limit],
+    )
+    monkeypatch.setattr(web_module.store, "count_source_candidates", lambda status=None, origin=None: len(candidates))
+
+    with TestClient(web_module.app) as client:
+        response = client.get("/debug/sources?page=2", headers={"accept": "application/json"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["candidate_count"] == 10
+    assert payload["total_candidates"] == 60
+    assert payload["page"] == 2
+    assert payload["page_count"] == 2
+    assert payload["has_prev"] is True
+    assert payload["has_next"] is False
+    assert payload["candidates"][0]["id"] == 51
+
+
+def test_debug_sources_candidate_display_name_uses_wiki_game_title(monkeypatch):
+    import erfairy.web as web_module
+
+    candidates = [
+        {
+            "id": 1,
+            "url": "https://wiki.biligame.com/ys",
+            "source_type": "biligame-wiki",
+            "title": "Biligame 原神 Wiki",
+            "status": "pending",
+            "reason": "内置推荐的站点 Profile",
+            "config": {
+                "discovery_origin": "known-profile",
+                "discovery_label": "内置推荐源",
+                "wiki_game_title": "原神",
+                "wiki_game_aliases": ["Genshin Impact"],
+            },
+            "config_json": "{}",
+            "discovered_at": "2026-05-30T00:00:00+00:00",
+            "approved_at": "",
+        }
+    ]
+
+    monkeypatch.setattr(web_module.store, "source_candidates_page", lambda **kwargs: candidates)
+    monkeypatch.setattr(web_module.store, "count_source_candidates", lambda **kwargs: len(candidates))
+
+    with TestClient(web_module.app) as client:
+        response = client.get("/debug/sources", headers={"accept": "application/json"})
+        html_response = client.get("/debug/sources")
+
+    assert response.status_code == 200
+    assert response.json()["candidates"][0]["display_name"] == "biligame-wiki 原神页面"
+    assert "biligame-wiki 原神页面" in html_response.text
+
+
+def test_bulk_candidate_approve_and_reject(monkeypatch):
+    import erfairy.web as web_module
+
+    def candidate(candidate_id, status):
+        return {
+            "id": candidate_id,
+            "url": f"https://example.com/{candidate_id}",
+            "source_type": "rss-feed",
+            "title": f"Candidate {candidate_id}",
+            "status": status,
+            "reason": "从页面 RSS/Sitemap 规则发现",
+            "config": {"discovery_origin": "generic-feed", "discovery_label": "通用 RSS/Sitemap 发现"},
+            "config_json": "{}",
+            "discovered_at": "2026-05-30T00:00:00+00:00",
+            "approved_at": "",
+        }
+
+    monkeypatch.setattr(web_module.store, "approve_source_candidate", lambda candidate_id: candidate(candidate_id, "approved"))
+    monkeypatch.setattr(web_module.store, "reject_source_candidate", lambda candidate_id: candidate(candidate_id, "rejected"))
+
+    with TestClient(web_module.app) as client:
+        approve = client.post("/sources/candidates/bulk-approve", json={"candidate_ids": [1, 2]})
+        reject = client.post("/sources/candidates/bulk-reject", data={"candidate_ids": ["3", "4"]})
+
+    assert approve.status_code == 200
+    assert approve.json()["approved"] == 2
+    assert approve.json()["results"][0]["candidate"]["discovery_label"] == "通用 RSS/Sitemap 发现"
+    assert reject.status_code == 200
+    assert reject.json()["rejected"] == 2
 
 
 def test_candidate_test_crawl_does_not_persist(monkeypatch):
@@ -391,7 +564,16 @@ def test_candidate_test_crawl_does_not_persist(monkeypatch):
         web_module,
         "_crawl_with_source_strategy",
         lambda crawl_config, source: CrawlResult(
-            documents=[SearchDocument(url="local://candidate", title="Candidate", content="body")],
+            documents=[
+                SearchDocument(
+                    url=f"local://candidate-{index}",
+                    title=f"Candidate {index}",
+                    content="body",
+                    content_quality_score=0.82,
+                    content_quality_labels=["guide"],
+                )
+                for index in range(6)
+            ],
             errors=[],
         ),
     )
@@ -402,8 +584,12 @@ def test_candidate_test_crawl_does_not_persist(monkeypatch):
     assert response.status_code == 200
     payload = response.json()
     assert payload["source_id"] == "candidate-7"
-    assert payload["would_save"] == 1
-    assert payload["preview_documents"][0]["title"] == "Candidate"
+    assert payload["would_save"] == 6
+    assert payload["preview_count"] == 6
+    assert len(payload["preview_documents"]) == 6
+    assert payload["preview_documents"][0]["title"] == "Candidate 0"
+    assert payload["preview_documents"][0]["content_quality_score"] == 0.82
+    assert payload["preview_documents"][0]["content_quality_labels"] == ["guide"]
     assert payload["entry_url"] == "https://example.com/feed.xml"
     assert payload["persisted"] is False
 
@@ -412,7 +598,8 @@ def test_candidate_test_crawl_does_not_persist(monkeypatch):
 
     assert html_response.status_code == 200
     assert "Candidate Preview" in html_response.text
-    assert "Candidate" in html_response.text
+    assert "Candidate 5" in html_response.text
+    assert "guide" in html_response.text
 
 
 def test_miyoushe_candidate_uses_profile_config_for_test_crawl(monkeypatch):
@@ -428,7 +615,7 @@ def test_miyoushe_candidate_uses_profile_config_for_test_crawl(monkeypatch):
         "reason": "Known Miyoushe community profile",
         "config": {
             "category": "anime",
-            "max_pages": 20,
+            "max_pages": 5,
             "max_depth": 0,
             "delay_seconds": 1.0,
             "source_score": 0.95,
@@ -488,7 +675,83 @@ def test_candidate_approve_can_trigger_crawl(monkeypatch):
     payload = response.json()
     assert payload["approved"] == 1
     assert payload["source_id"] == "candidate-8"
+    assert "effective_config" in payload["candidate"]
     assert payload["crawl_result"]["saved"] == 1
+
+
+def test_miyoushe_candidate_approve_response_reports_effective_config(monkeypatch):
+    import erfairy.web as web_module
+
+    candidate = {
+        "id": 34,
+        "url": "https://www.miyoushe.com/sr/",
+        "source_type": "miyoushe-feed",
+        "title": "Miyoushe SR",
+        "status": "approved",
+        "reason": "Known Miyoushe community profile",
+        "config": {
+            "category": "anime",
+            "max_pages": 5,
+            "max_depth": 0,
+            "delay_seconds": 1.0,
+            "source_score": 0.95,
+            "allowed_domains": ["www.miyoushe.com"],
+            "miyoushe_profile_id": "miyoushe-sr",
+        },
+        "config_json": "{}",
+        "discovered_at": "2026-05-30T09:01:40+00:00",
+        "approved_at": "2026-05-31T04:33:49+00:00",
+    }
+    monkeypatch.setattr(web_module.store, "approve_source_candidate", lambda candidate_id: candidate)
+    monkeypatch.setattr(web_module.store, "get_source_candidate", lambda candidate_id: candidate)
+
+    def fake_run(crawl_config, source):
+        return {
+            "source_id": source.source_id,
+            "saved": 19,
+            "max_pages": crawl_config.max_pages,
+            "parse_strategy": source.parse_strategy,
+        }
+
+    monkeypatch.setattr(web_module, "_run_crawl", fake_run)
+
+    with TestClient(web_module.app) as client:
+        response = client.post("/sources/candidates/34/approve", params={"crawl": "true"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["candidate"]["config"]["max_pages"] == 5
+    assert payload["candidate"]["effective_config"]["max_pages"] == 20
+    assert payload["candidate"]["effective_config"]["quality_profile"] == "miyoushe-community"
+    assert payload["crawl_result"]["max_pages"] == 20
+    assert payload["crawl_result"]["parse_strategy"] == "miyoushe-feed"
+
+
+def test_crawl_with_source_strategy_dispatches_biligame_wiki(monkeypatch):
+    import erfairy.web as web_module
+    from erfairy.models import CrawlResult, SearchDocument
+    from erfairy.sources import SourceConfig
+
+    source = SourceConfig(
+        name="Biligame 原神 Wiki",
+        entry_url="https://wiki.biligame.com/ys",
+        allowed_domains=["wiki.biligame.com"],
+        category="game",
+        max_pages=3,
+        source_score=0.86,
+        parse_strategy="biligame-wiki",
+    )
+
+    def fake_crawl(self, received_source):
+        assert received_source is source
+        return CrawlResult(documents=[SearchDocument(url="local://biligame", title="Wiki", content="body")], errors=[])
+
+    monkeypatch.setattr("erfairy.web.BiligameWikiCrawler.crawl", fake_crawl)
+
+    result = web_module._crawl_with_source_strategy(source.to_crawl_config(), source)
+
+    assert len(result.documents) == 1
+    assert result.documents[0].title == "Wiki"
 
 
 def test_debug_crawl_scheduler_returns_disabled_state(monkeypatch):

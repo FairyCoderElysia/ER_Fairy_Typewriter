@@ -22,14 +22,14 @@
 - 环境变量：
   - `ERFAIRY_CRAWL_SCHEDULER=1` 开启。
   - `ERFAIRY_CRAWL_INTERVAL_MINUTES=60` 默认 1 小时。
-  - `ERFAIRY_CRAWL_SOURCE_IDS=mal-news,ann-home,...` 可选限制自动抓取源。
+  - `ERFAIRY_CRAWL_SOURCE_IDS=all` 或留空表示自动抓取全部源；`mal-news,ann-home,...` 可选限制自动抓取源。
 - 新增 `/debug/crawl-scheduler` 页面/JSON，展示是否启用、上次运行、下次运行、最近批量结果。
 
 ### 新增半自动站点接入
 
 - 新增 SQLite 表 `source_candidates`，保存发现到的候选源：`url`、`source_type`、`title`、`status`、`reason`、`config_json`、`discovered_at`、`approved_at`。
 - 新增 `POST /sources/discover`：输入一个站点根 URL，尝试发现：
-  - 已注册站点 Profile，例如米游社 `ys`、`bh3`、`sr`、萌娘百科、Bangumi、TapTap、GameKee
+  - 已注册站点 Profile，例如米游社 `ys`、`bh3`、`sr`、萌娘百科、Bangumi、TapTap、GameKee、Biligame Wiki
   - `<link rel="alternate" type="application/rss+xml">`
   - 常见 `/rss`、`/feed`、`/atom.xml`
   - `/sitemap.xml`
@@ -109,13 +109,20 @@
 
 - 已新增通用 `rss-feed`、`sitemap-feed`、`html-list-feed` 抓取器。
 - 已将发现器重构为 Profile 注册结构，普通 RSS/Sitemap/List 由 `GenericWebDiscoveryProfile` 负责，米游社由 `MiyousheDiscoveryProfile` 负责。
-- 已新增国内二次元/二游站点 Profile：萌娘百科 `moegirl-api`、Bangumi `bangumi-api`、TapTap `taptap-feed`、GameKee `gamekee-feed`。
+- 已新增国内二次元/二游站点 Profile：萌娘百科 `moegirl-api`、Bangumi `bangumi-api`、TapTap `taptap-feed`、GameKee `gamekee-feed`、Biligame Wiki `biligame-wiki`。
 - 已新增 API 型抓取器，能把萌娘百科 MediaWiki API 和 Bangumi 番组计划 API 转成搜索文档。
-- 已新增 TapTap/GameKee 专用抓取器：TapTap 抓具体 app 页及介绍/攻略/论坛/活动子页；GameKee 通过 wiki 公开接口抓最近更新内容。
+- 已新增 TapTap/GameKee/Biligame Wiki 专用抓取器：TapTap 抓具体 app 页及介绍/攻略/论坛/活动子页；GameKee 通过 wiki 公开接口抓最近更新内容；Biligame Wiki 通过 MediaWiki API 抓最近更新页面正文。
+- GameKee 和 Biligame Wiki 根站发现已支持“内置推荐源 + 首页热门/推荐区域发现”组合：常用分区继续稳定推荐，首页热门区域最多解析 30 个游戏 Wiki 候选；如果热门区域解析不到，再回退到页面前 30 个像 Wiki 分区的链接，避免一次生成上千个低活跃候选源。
+- 候选源 `config_json` 已记录 `discovery_origin`、`discovery_label`、`discovery_site`，用于区分 `内置推荐源`、`首页解析发现` 和 `通用 RSS/Sitemap 发现`。
+- Wiki 类候选源 `config_json` 已记录 `wiki_game_title` 和 `wiki_game_aliases`；GameKee/Biligame Wiki 文档会把分区 alias、规范游戏名、别名和页面分类写入 `tags`，并把规范游戏名写入 `game_title`，修复非原神 Wiki 误标为原神以及中文游戏名无法通过 tags 命中的问题。
+- 已新增社区内容质量评分：文档会保存 `content_quality_score` 和 `content_quality_labels`，搜索排序用轻量加分让高价值社区内容前移。
+- 米游社已从单一最新流升级为最新/精品/热门多路采样，合并去重后按内容质量分和发布时间截取 `max_pages`。
+- TapTap 已对 app 主页面、介绍、攻略、论坛、活动页接入质量评分，攻略和活动页会优先获得更高质量分。
 - 已新增候选源发现、审核和拒绝 API。
 - 已支持候选源试抓：`POST /sources/candidates/{id}/test-crawl`。
-- 已支持候选源启用前预览：脚本调用返回 JSON，`/debug/sources` 页面点击试抓返回 HTML 预览页，展示前 5 篇候选文档。
+- 已支持候选源启用前预览：脚本调用返回 JSON，`/debug/sources` 页面点击试抓返回 HTML 预览页，展示本次试抓得到的候选文档。
 - 已支持启用并立即抓取：`POST /sources/candidates/{id}/approve?crawl=true`。
+- 已支持 `/debug/sources` 按候选源状态和发现来源筛选、按 `page` 分页，每页 50 条；批量启用/批量拒绝只作用于当前页勾选的候选源。
 - 已新增 `source_candidates` 表，并用 `config_json` 保存候选源默认抓取配置。
 - 已支持对 `https://www.miyoushe.com/ys/`、`https://www.miyoushe.com/bh3`、`https://www.miyoushe.com/sr` 执行 `/sources/discover`，生成 `miyoushe-feed` 候选源。
 - 米游社候选源审核后仍使用 `candidate-{id}`，抓取时会根据 `entry_url` 解析到原神、崩坏3或星穹铁道对应 profile。
@@ -144,14 +151,17 @@
 - `delay_seconds = 1.0`
 - `category = anime`
 - `source_score = 0.95`
+- `quality_profile = miyoushe-community`
+- `quality_mode = score`
 - `scheduler_interval_minutes = 60`
 
 国内二次元/二游 Profile 默认值：
 
 - 萌娘百科：`parse_strategy = moegirl-api`，`category = anime`，`max_pages = 50`，`source_score = 0.9`
 - Bangumi：`parse_strategy = bangumi-api`，`category = anime`，`max_pages = 50`，`source_score = 0.88`
-- TapTap：`parse_strategy = taptap-feed`，`category = game`，`max_pages = 50`，`source_score = 0.78`
+- TapTap：`parse_strategy = taptap-feed`，`category = game`，`max_pages = 50`，`source_score = 0.78`，`quality_profile = taptap-community`
 - GameKee：`parse_strategy = gamekee-feed`，`category = game`，`max_pages = 50`，`source_score = 0.84`
+- Biligame Wiki：`parse_strategy = biligame-wiki`，`category = game`，`max_pages = 50`，`source_score = 0.86`
 
 ## Smoke Test Record
 
@@ -169,5 +179,5 @@
 - GameKee `https://www.gamekee.com/ba` 通过 `/sources/discover` 生成 `gamekee-feed` 候选源，`test-crawl` 返回 `would_save=20`、`errors=0`，预览能看到 wiki 最近更新内容。
 - TapTap `https://www.taptap.cn/app/168332` 通过 `/sources/discover` 生成 `taptap-feed` 候选源，`test-crawl` 返回 `would_save=5`、`errors=0`，预览包含游戏页、介绍、攻略、论坛和活动页。
 - `/debug/crawl-scheduler` JSON 返回 200，当前全局 `interval_minutes=60`，并展示每个源的 `interval_minutes`、`last_run_at`、`next_run_at` 和最近结果。
-- `python -m pytest` 通过，结果为 `107 passed`。
+- 2026-05-31 Wiki 候选分页/热门发现/游戏名规范化改造后，相关回归通过：`python -m compileall erfairy`、`python -m pytest tests/test_wiki_profiles.py tests/test_cn_site_feeds.py tests/test_source_discovery.py tests/test_sources.py tests/test_tokenizer_indexer.py tests/test_crawl_scheduler.py -q` 为 `64 passed`，候选源分页和审核相关 API 定向测试为 `5 passed`。当前本地全量 `python -m pytest` 因多次启动 FastAPI 测试客户端并读取较大的本地 SQLite 数据，10 分钟超时，后续建议使用隔离测试数据库再恢复全量耗时基线。
 - 搜索评测保持稳定：23 个用例 Top1 100%、Top3 100%、Zero Result Rate 0。

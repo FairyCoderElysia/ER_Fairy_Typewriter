@@ -50,6 +50,8 @@
               <tr>
                 <th>title</th>
                 <th>category</th>
+                <th>quality</th>
+                <th>labels</th>
                 <th>source</th>
                 <th>url</th>
               </tr>
@@ -59,6 +61,12 @@
                 <tr>
                   <td>{{ document.title }}</td>
                   <td>{{ document.category }}</td>
+                  <td>{{ '%.3f'|format(document.content_quality_score) }}</td>
+                  <td>
+                    {% for label in document.content_quality_labels %}
+                      <span class="inline-tag">{{ label }}</span>
+                    {% endfor %}
+                  </td>
                   <td>{{ document.source }}</td>
                   <td><a href="{{ document.url }}">{{ document.url }}</a></td>
                 </tr>

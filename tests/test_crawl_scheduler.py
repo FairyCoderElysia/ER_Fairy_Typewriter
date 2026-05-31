@@ -53,6 +53,26 @@ def test_crawl_scheduler_tracks_per_source_next_run():
     assert payload["next_run_at"] == payload["next_run_by_source"]["fast"]
 
 
+def test_crawl_scheduler_source_ids_all_selects_every_source():
+    now = datetime(2026, 5, 30, tzinfo=timezone.utc)
+    scheduler = CrawlScheduler(
+        enabled=True,
+        interval_minutes=60,
+        source_ids=["all"],
+        crawl_source=lambda source_id: {},
+        source_provider=lambda: [
+            DummySource("mal-news", "MAL"),
+            DummySource("miyoushe-ys", "Miyoushe"),
+        ],
+    )
+
+    scheduler.refresh_schedule(now)
+    payload = scheduler.as_dict()
+
+    assert {source["source_id"] for source in payload["sources"]} == {"mal-news", "miyoushe-ys"}
+    assert set(payload["next_run_by_source"]) == {"mal-news", "miyoushe-ys"}
+
+
 def test_crawl_scheduler_only_runs_due_sources_and_keeps_going_after_failure():
     now = datetime(2026, 5, 30, tzinfo=timezone.utc)
     calls = []

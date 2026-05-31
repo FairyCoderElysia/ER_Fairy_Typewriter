@@ -32,7 +32,7 @@ uvicorn erfairy.web:app --reload
 - 为什么 SQLite 先用 URL 去重，再用 `content_hash` 和标题相似度合并重复页面？
 - `crawl_runs` 和 `crawl_errors` 分别记录什么？为什么失败记录也值得持久化？
 - 为什么存储层和索引层要分开？
-- `aliases`、`entity_type`、`game_title`、`character_name`、`source_score` 各自负责什么？
+- `aliases`、`entity_type`、`game_title`、`character_name`、`source_score`、`content_quality_score` 和 `content_quality_labels` 各自负责什么？
 - 为什么词典补全要返回文档副本，而不是直接修改全局样例对象？
 
 ## 3. 理解分词和索引
@@ -97,10 +97,14 @@ uvicorn erfairy.web:app --reload
 - `sources.example.json` 里的 `source_score` 如何补进抓取文档？
 - MyAnimeList、Anime News Network、FGO 为什么要先抽列表链接，再抓详情页？
 - 米游社这类前端应用为什么不能只解析入口 HTML，而要通过帖子流接口生成多篇文档？
+- 米游社为什么要同时尝试最新、精品和热门流，而不是只抓最新流？
 - 为什么文章流源默认 `max_pages=50`，米游社源默认 `max_pages=20`？
 - GameKee 和 TapTap 为什么需要专用抓取器，而不是只依赖通用 `html-list-feed`？
+- 为什么社区站点不直接丢弃日常帖，而是用 `content_quality_score` 做评分降权？
 - `/sources/discover` 为什么只生成候选源，而不是自动启用新站点？
 - 候选源的 `config_json` 为什么要保存 `parse_strategy`、`max_pages`、`category` 和 `source_score`？
+- Wiki 候选源为什么还要保存 `wiki_game_title` 和 `wiki_game_aliases`，而不是只用 URL alias？
+- `/debug/sources` 为什么要分页，每页 50 条时 `limit`、`offset` 和 `page_count` 是如何计算的？
 - 自动调度器为什么默认关闭，但默认间隔从 6 小时改为 1 小时？
 - `scheduler_interval_minutes` 为什么要支持按源覆盖？
 - `category=auto` 如何根据 URL、标题、摘要、标签和 `entity_type` 推断 `news`、`character` 或 `anime`？
@@ -165,6 +169,7 @@ GET /debug/search?q=原神&category=anime
 - `game_title`：是否帮助角色和作品关联更稳定。
 - `character_name`：是否让角色名精确命中更靠前。
 - `source_score`：是否只做轻微来源加分，而没有盖过相关性。
+- `content_quality_score` / `content_quality_labels`：是否让官方、热门、精品、攻略、养成、活动内容前移，让日常帖后沉。
 - `published_at` / `crawled_at`：新闻意图查询下是否让近期资讯更靠前。
 - `content_hash`：是否帮助同正文不同 URL 的页面合并。
 - 标题相似度：是否帮助标题几乎相同的重复页面合并。
@@ -305,6 +310,7 @@ POST /reindex
 - 为什么环境变量适合做本地教学项目的第一版开关？
 - 如果未来部署到公网，除了环境变量，还可以增加哪些保护？
 - 为什么 `source_score` 应该是来源质量的轻微加分，而不是主排序因素？
+- 为什么 `content_quality_score` 是单篇内容价值，而不是站点整体可信度？
 - 为什么 `category` 支持自动判断，但仍允许手动覆盖？
 
 ## 9. 理解回归测试
@@ -330,7 +336,7 @@ POST /reindex
 
 阶段 6 已经完成索引后端对照、真实 Redis、Meilisearch、完整增量索引和多后端 debug；阶段 7 已经完成第一轮前端调试体验与持续采集体验。下一步建议按这个顺序继续：
 
-1. 先看 `aliases`、`entity_type`、`game_title`、`character_name`、`source_score` 在 `erfairy/models.py` 和 `erfairy/indexer.py` 里的流动。
+1. 先看 `aliases`、`entity_type`、`game_title`、`character_name`、`source_score`、`content_quality_score` 在 `erfairy/models.py` 和 `erfairy/indexer.py` 里的流动。
 2. 再看 `content_hash`、canonical URL 和标题相似度在 `erfairy/parser.py` 与 `erfairy/store.py` 里的去重链路。
 3. 再用 `/debug/search` 对照每个字段的分数贡献。
 4. 再用 `tests/test_search_eval.py` 看调权重后哪条查询变好、哪条查询变差。
@@ -346,4 +352,5 @@ POST /reindex
 14. 用 `/sources/discover` 尝试一个 RSS/Sitemap 站点，再用 `/sources/candidates/{id}/test-crawl` 试抓，确认 `would_save`、`errors` 和 `preview_documents`。
 15. 用米游社、萌娘百科、Bangumi、TapTap 或 GameKee 再试一次 Profile 型候选源，观察 `source_type` 和 `config_json` 与普通 RSS 候选有什么不同。
 16. 打开 `/debug/crawl-scheduler`，理解全局 interval、每源 `scheduler_interval_minutes`、`last_run_at` 和 `next_run_at` 如何决定下一次自动抓取。
-17. 新增真实内容后运行 `python -m pytest tests/test_search_eval.py`，确认 Top1/Top3 不因为数据增多而退化。
+17. 打开米游社或 TapTap 的试抓预览，观察 `official`、`hot`、`good`、`guide`、`daily-chat` 等质量标签如何出现。
+18. 新增真实内容后运行 `python -m pytest tests/test_search_eval.py`，确认 Top1/Top3 不因为数据增多而退化。

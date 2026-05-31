@@ -145,10 +145,13 @@ class CrawlScheduler:
 
     def _selected_sources(self) -> list[CrawlSource]:
         sources = list(self._source_provider())
-        if not self.source_ids:
+        if not self.source_ids or self._wants_all_sources():
             return sources
         wanted = set(self.source_ids)
         return [source for source in sources if self._source_id(source) in wanted or source.name in wanted]
+
+    def _wants_all_sources(self) -> bool:
+        return any(source_id.strip().lower() in {"all", "*"} for source_id in self.source_ids)
 
     def _source_id(self, source: CrawlSource) -> str:
         return source.source_id or source.name

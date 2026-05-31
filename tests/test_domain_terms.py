@@ -50,3 +50,21 @@ def test_enrich_document_keeps_explicit_parser_fields():
     assert enriched.entity_type == "news"
     assert enriched.game_title == "FGO"
     assert enriched.character_name == "玛修"
+
+
+def test_enrich_document_does_not_match_single_character_alias_as_substring():
+    terms = load_domain_terms(Path(__file__).parent.parent / "aliases.example.json")
+    document = SearchDocument(
+        id=1,
+        url="local://your-name",
+        title="你的名字 新海诚动画电影",
+        content="这是一部动画电影，不是原神角色资料。",
+        tags=["动画电影", "新海诚"],
+        aliases=["你的名字"],
+    )
+
+    enriched = enrich_document(document, terms)
+
+    assert "雷电将军" not in enriched.aliases
+    assert enriched.game_title == ""
+    assert enriched.character_name == ""
